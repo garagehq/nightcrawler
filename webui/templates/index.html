@@ -1,0 +1,3553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NIGHTCRAWLER</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <style>
+        /* No external font imports — works offline/air-gapped */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --green: #00ff41;
+            --green-dim: #003b00;
+            --green-mid: #00aa2a;
+            --red: #ff0040;
+            --yellow: #ffcc00;
+            --cyan: #00e5ff;
+            --bg: #0a0a0a;
+            --bg-panel: #0d1117;
+            --border: #1a3a1a;
+            --text: #c0c0c0;
+            --text-dim: #555;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--green);
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        /* Matrix rain canvas */
+        #matrix-bg {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: -1;
+            opacity: 0.06;
+        }
+
+        /* Scanline overlay */
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,0,0,0.1) 2px,
+                rgba(0,0,0,0.1) 4px
+            );
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        html, body {
+            overflow-x: hidden;
+            width: 100%;
+        }
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 10px;
+            overflow-x: hidden;
+        }
+
+        /* Banner */
+        .banner {
+            text-align: center;
+            padding: 15px 0 10px;
+            font-size: 11px;
+            line-height: 1.2;
+            color: var(--green);
+            text-shadow: 0 0 10px var(--green-dim);
+            white-space: pre;
+            overflow: hidden;    /* Clip ASCII art on narrow screens */
+        }
+        .banner .version {
+            font-size: 10px;
+            color: var(--green-mid);
+        }
+
+        /* Status bar */
+        .status-bar {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            margin-bottom: 10px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+        }
+        .status-label { color: var(--text-dim); }
+        .status-value { color: var(--green); font-weight: bold; }
+        .status-value.offline { color: var(--red); }
+        .status-value.warning { color: var(--yellow); }
+        .status-value.phase {
+            font-size: 16px;
+            text-shadow: 0 0 15px var(--green);
+        }
+
+        /* Panels grid */
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        @media (max-width: 768px) {
+            .panels { grid-template-columns: 1fr; }
+            .status-bar { grid-template-columns: 1fr; }
+        }
+        /* Mobile portrait — prevent horizontal overflow */
+        @media (max-width: 480px) {
+            .container { padding: 5px; }
+            .banner h1 { font-size: 1.1em; }
+            .search-input { width: 100px !important; }
+            .config-row input[type="number"],
+            .config-row input[type="text"] { width: 70px !important; }
+            #host-search { width: 120px !important; }
+            #cmd-search { width: 100px !important; }
+            #cred-user, #cred-pass, #cred-host { width: 70px !important; }
+            #cfg-disabled, #cfg-preferred { width: 100px !important; }
+            #cfg-ophours-start, #cfg-ophours-end { width: 50px !important; }
+            .config-panel { min-width: unset !important; width: 95vw !important; }
+            .toast { max-width: 90vw; }
+        }
+        /* Landscape — use full width */
+        @media (max-height: 500px) and (orientation: landscape) {
+            .container { max-width: 100%; padding: 5px; }
+            .panels { grid-template-columns: 1fr 1fr; }
+            .panel { max-height: 300px; }
+        }
+
+        /* Mobile tab bar — hidden on desktop */
+        .tab-bar {
+            display: none;
+            gap: 4px;
+            padding: 6px 0;
+            overflow-x: auto;
+            white-space: nowrap;
+            -webkit-overflow-scrolling: touch;
+        }
+        .tab-btn {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            padding: 5px 12px;
+            font-family: inherit;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .tab-btn.active { border-color: var(--green); color: var(--green); background: var(--green-dim); }
+        @media (max-width: 768px) {
+            .tab-bar { display: flex; }
+            .panel.tab-hidden { display: none !important; }
+        }
+
+        /* Host sparkline */
+        .host-sparkline { display: inline-block; vertical-align: middle; margin-left: 6px; }
+
+        .panel {
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            min-height: 200px;
+            max-height: 400px;
+            min-width: 0;        /* Allow grid to shrink panels below content width */
+            overflow: hidden;    /* Prevent content from pushing panel wider */
+            display: flex;
+            flex-direction: column;
+        }
+        .panel-header {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            font-weight: bold;
+            color: var(--green);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            text-shadow: 0 0 5px var(--green-dim);
+        }
+        .panel-header .count {
+            background: var(--green-dim);
+            padding: 2px 8px;
+            border-radius: 2px;
+            font-size: 11px;
+        }
+        .panel-body {
+            padding: 8px 12px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            flex: 1;
+            scrollbar-width: thin;
+            scrollbar-color: var(--green-dim) var(--bg);
+        }
+
+        /* Feed entries */
+        .feed-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #111;
+            display: flex;
+            gap: 8px;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .feed-ts { color: var(--text-dim); white-space: nowrap; }
+        .feed-type {
+            padding: 0 4px;
+            border-radius: 2px;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .feed-type.thought { color: var(--cyan); }
+        .feed-type.command { color: var(--green); font-weight: bold; }
+        .feed-type.result { color: var(--text); }
+        .feed-type.blocked { color: var(--red); }
+        .feed-type.error { color: var(--red); }
+        .feed-type.warning { color: var(--yellow); }
+        .feed-type.phase { color: var(--green); font-weight: bold; font-size: 14px; }
+        .feed-content {
+            color: var(--text);
+            word-break: break-word;
+            flex: 1;
+        }
+        .feed-content.cmd { color: var(--green); }
+
+        /* Hosts table */
+        .host-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #111;
+        }
+        .host-ip { color: var(--cyan); font-weight: bold; }
+        .host-ports { color: var(--text-dim); font-size: 11px; }
+        .host-info { color: var(--text-dim); font-size: 11px; }
+
+        /* Findings bar */
+        .findings-bar {
+            display: flex;
+            gap: 20px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .finding-stat {
+            text-align: center;
+        }
+        .finding-stat .num {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--green);
+            text-shadow: 0 0 15px var(--green-dim);
+        }
+        .finding-stat .label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        /* Host cards — clickable */
+        .host-card {
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            overflow: hidden;
+        }
+        .host-card:hover { border-color: var(--green-mid); }
+        .host-card.expanded { border-color: var(--green); }
+        .host-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            min-width: 0;        /* Allow flex children to shrink */
+            overflow: hidden;
+        }
+        .host-mac { color: var(--text-dim); font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+        .host-hostname { color: var(--yellow); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+        .host-detail {
+            display: none;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+        }
+        .host-card.expanded .host-detail { display: block; }
+        .port-line {
+            padding: 2px 0;
+            font-size: 12px;
+            display: flex;
+            gap: 12px;
+        }
+        .port-num { color: var(--cyan); font-weight: bold; min-width: 50px; }
+        .port-service { color: var(--text); }
+        .port-state { color: var(--green); font-size: 10px; }
+        .host-history {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #111;
+        }
+        .host-history-title { color: var(--text-dim); font-size: 10px; margin-bottom: 4px; }
+        .history-entry { font-size: 11px; color: var(--text-dim); padding: 2px 0; }
+        .history-cmd { color: var(--green); }
+        .host-network { color: var(--text-dim); font-size: 10px; }
+
+        /* Cred/vuln entries */
+        .cred-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #111;
+            font-size: 12px;
+        }
+        .cred-service { color: var(--cyan); }
+        .cred-user { color: var(--yellow); }
+        .vuln-card {
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            font-size: 12px;
+        }
+        .vuln-card:hover { border-color: var(--yellow); }
+        .vuln-card.expanded { border-color: var(--red); }
+        .vuln-card-header { display: flex; justify-content: space-between; align-items: center; }
+        .vuln-detail {
+            display: none;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+        }
+        .vuln-card.expanded .vuln-detail { display: block; }
+        .vuln-severity.critical { color: var(--red); font-weight: bold; }
+        .vuln-severity.high { color: var(--red); }
+        .vuln-severity.medium { color: var(--yellow); }
+        .vuln-severity.low { color: var(--text-dim); }
+        .vuln-detail-section { margin-bottom: 8px; }
+        .vuln-detail-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; margin-bottom: 2px; }
+        .vuln-detail-value { font-size: 11px; color: var(--green); word-break: break-all; }
+        .vuln-detail-value.remediation { color: var(--yellow); }
+        .vuln-detail-value.chain { color: var(--cyan); font-family: monospace; }
+        .vuln-cve-tag { display: inline-block; background: #1a0a0a; border: 1px solid var(--red); color: var(--red); padding: 1px 6px; margin: 2px 2px 2px 0; font-size: 10px; border-radius: 3px; }
+
+        /* Passive capture cards */
+        .passive-card {
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            font-size: 11px;
+            overflow: hidden;
+        }
+        .passive-card:hover { border-color: var(--cyan); }
+        .passive-card.expanded { border-color: var(--green); }
+        .passive-card-header { display: flex; justify-content: space-between; min-width: 0; overflow: hidden; }
+        .passive-detail {
+            display: none;
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid var(--border);
+            font-size: 11px;
+        }
+        .passive-card.expanded .passive-detail { display: block; }
+        .passive-type-mdns { color: var(--cyan); }
+        .passive-type-arp { color: var(--green); }
+        .passive-type-nbns { color: var(--yellow); }
+        .passive-type-dhcp { color: #ff6600; }
+        .passive-network-alert { background: #1a0a0a; border: 1px solid var(--red); color: var(--red); padding: 2px 6px; font-size: 10px; border-radius: 3px; display: inline-block; margin: 2px; }
+
+        /* Network map */
+        #map-toggle-btn.active { background: var(--green); color: #000; }
+        .modal-section { margin-bottom: 12px; }
+        .modal-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; margin-bottom: 4px; }
+        .modal-value { font-size: 12px; color: var(--green); }
+        .modal-port { display: inline-block; background: #111; border: 1px solid var(--border); padding: 2px 6px; margin: 2px; font-size: 11px; }
+        .modal-vuln { padding: 6px; margin: 4px 0; border-left: 2px solid var(--red); background: #0f0505; font-size: 11px; }
+
+        /* Network selector */
+        .network-bar {
+            display: flex;
+            gap: 8px;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            margin-bottom: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .network-bar label { color: var(--text-dim); font-size: 11px; }
+        .network-btn {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--green);
+            padding: 3px 10px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+        }
+        .network-btn:hover { border-color: var(--green-mid); }
+        .network-btn.active { border-color: var(--green); background: var(--green-dim); }
+
+        /* Offline mode */
+        .offline-amber { color: #ffaa00 !important; }
+        .offline-bar {
+            display: flex; gap: 8px; padding: 8px 10px;
+            border: 1px solid #ffaa00; background: rgba(255,170,0,0.05);
+            margin-bottom: 10px; align-items: center; flex-wrap: wrap;
+        }
+        .offline-bar button {
+            background: var(--bg); border: 1px solid #ffaa00; color: #ffaa00;
+            padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 11px;
+        }
+        .offline-bar button:hover { background: rgba(255,170,0,0.15); }
+        .offline-bar button.active { background: rgba(255,170,0,0.2); border-color: #ffcc44; }
+        .offline-bar .stage-indicator {
+            color: var(--text-dim); font-size: 10px;
+        }
+        .stage-pill {
+            padding: 2px 8px; border: 1px solid var(--border); font-size: 10px;
+            color: var(--text-dim); transition: all 0.3s;
+        }
+        .stage-pill.active-stage {
+            color: #ffaa00; border-color: #ffaa00; background: rgba(255,170,0,0.1);
+            font-weight: bold; text-shadow: 0 0 6px #ffaa0044;
+        }
+        .stage-pill.completed-stage {
+            color: #00ff41; border-color: #00ff4144;
+        }
+        .stage-arrow { color: var(--text-dim); font-size: 10px; line-height: 22px; }
+        .wifi-network-card {
+            border: 1px solid var(--border); padding: 8px 10px; margin: 4px 0; cursor: pointer;
+            display: flex; justify-content: space-between; align-items: center;
+            transition: border-color 0.2s;
+        }
+        .wifi-network-card:hover { border-color: #ffaa00; }
+        .wifi-network-card.selected { border-color: #ffaa00; background: rgba(255,170,0,0.08); }
+        .wifi-network-card .ssid { color: #ffaa00; font-size: 13px; }
+        .wifi-network-card .meta { color: var(--text-dim); font-size: 10px; display: flex; gap: 10px; }
+        .wifi-signal-bars { display: inline-flex; gap: 1px; align-items: flex-end; height: 12px; }
+        .wifi-signal-bars .bar { width: 3px; background: #333; }
+        .wifi-signal-bars .bar.on { background: #ffaa00; }
+        .crack-progress-bar {
+            height: 20px; background: #111; border: 1px solid #ffaa00; position: relative; margin: 8px 0;
+        }
+        .crack-progress-fill {
+            height: 100%; background: linear-gradient(90deg, #ff6600, #ffaa00); transition: width 0.5s;
+        }
+        .crack-progress-text {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-size: 11px; font-weight: bold;
+        }
+        .handshake-card {
+            border: 1px solid var(--border); padding: 6px 10px; margin: 3px 0;
+            display: flex; justify-content: space-between; align-items: center; font-size: 12px;
+        }
+        .handshake-card .cracked { color: #00ff41; }
+        .handshake-card .pending { color: #ffaa00; }
+        .handshake-card .failed { color: #ff4444; }
+        .offline-face {
+            font-size: 28px; text-align: center; padding: 8px 0;
+            color: #ffaa00; letter-spacing: 2px;
+            position: relative; overflow: hidden; height: 48px;
+            user-select: none;
+        }
+        .offline-face .face-inner {
+            display: inline-block; position: relative;
+            transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .offline-face .face-bubble {
+            position: absolute; font-size: 10px; color: #ffaa0088;
+            white-space: nowrap; pointer-events: none;
+            animation: faceBubbleFade 3s forwards;
+        }
+        @keyframes faceBubbleFade {
+            0% { opacity: 0; transform: translateY(0); }
+            20% { opacity: 1; }
+            100% { opacity: 0; transform: translateY(-30px); }
+        }
+        @keyframes faceBlink {
+            0%, 90%, 100% { opacity: 1; }
+            95% { opacity: 0; }
+        }
+        @keyframes faceWiggle {
+            0%, 100% { transform: rotate(0deg); }
+            25% { transform: rotate(-3deg); }
+            75% { transform: rotate(3deg); }
+        }
+        @keyframes faceBounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-4px); }
+        }
+        .capture-pulse { animation: capturePulse 1.5s ease-in-out infinite; }
+        @keyframes capturePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.2; }
+        }
+        .face-scanning .face-inner { animation: faceWiggle 2s ease-in-out infinite; }
+        .face-capturing .face-inner { animation: faceBlink 2s ease-in-out infinite; }
+        .face-cracking .face-inner { animation: faceBounce 0.8s ease-in-out infinite; }
+        body.offline-mode .network-bar { border-color: #ffaa00; }
+        body.offline-mode .network-bar label { color: #ffaa00; }
+        body.offline-mode .status-bar { border-color: #664400; }
+        body.offline-mode .phase { color: #ffaa00 !important; text-shadow: 0 0 10px #ffaa00; }
+        .online-only { /* hidden in offline mode */ }
+        .offline-only { display: none; /* shown in offline mode */ }
+        body.offline-mode .online-only { display: none !important; }
+        body.offline-mode .offline-only { display: block !important; }
+
+        /* Control bar */
+        .control-bar {
+            display: flex;
+            gap: 8px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            margin-bottom: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .control-bar button {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--green);
+            padding: 4px 12px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            transition: border-color 0.2s, color 0.2s;
+        }
+        .control-bar button:hover { border-color: var(--green-mid); }
+        .control-bar button.active-phase { border-color: var(--green); background: var(--green-dim); }
+        .control-label { color: var(--text-dim); font-size: 11px; margin-left: 8px; }
+        #kill-btn { border-color: var(--red); color: var(--red); }
+        #kill-btn:hover { background: rgba(255,0,64,0.1); }
+        #kill-btn.killed { background: var(--red); color: var(--bg); }
+        #pause-btn.paused { border-color: var(--yellow); color: var(--yellow); }
+
+        /* Command injection */
+        .command-input {
+            display: flex;
+            gap: 0;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            margin-top: 2px;
+            align-items: center;
+        }
+        .command-input .prompt {
+            color: var(--green);
+            padding: 6px 4px 6px 12px;
+            font-family: inherit;
+            font-size: 13px;
+            user-select: none;
+        }
+        .command-input input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--green);
+            font-family: inherit;
+            font-size: 13px;
+            padding: 6px 8px;
+            outline: none;
+        }
+        .command-input input::placeholder { color: var(--text-dim); }
+        .command-input button {
+            background: var(--bg);
+            border: none;
+            border-left: 1px solid var(--border);
+            color: var(--green);
+            padding: 6px 16px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .command-input button:hover { background: var(--green-dim); }
+
+        /* Command history search */
+        .search-input {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--green);
+            font-family: inherit;
+            font-size: 11px;
+            padding: 2px 8px;
+            outline: none;
+            width: min(160px, 40vw);
+            margin-left: auto;
+        }
+        .search-input::placeholder { color: var(--text-dim); }
+        .cmd-history-entry {
+            padding: 3px 0;
+            border-bottom: 1px solid #111;
+            font-size: 11px;
+        }
+        .cmd-history-entry .ts { color: var(--text-dim); }
+        .cmd-history-entry .cmd { color: var(--green); }
+        .cmd-history-entry .status-ok { color: var(--green); }
+        .cmd-history-entry .status-err { color: var(--red); }
+
+        /* Star icon */
+        .star-icon {
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 6px;
+            opacity: 0.3;
+            transition: opacity 0.2s;
+            user-select: none;
+        }
+        .star-icon:hover { opacity: 0.7; }
+        .star-icon.starred { opacity: 1; color: var(--yellow); }
+        .blacklist-icon { cursor: pointer; font-size: 12px; margin-right: 4px; opacity: 0.3; }
+        .blacklist-icon:hover { opacity: 0.7; }
+        .blacklist-icon.active { opacity: 1; color: var(--red); }
+
+        /* Host notes */
+        .host-notes {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #111;
+        }
+        .host-notes-title { color: var(--text-dim); font-size: 10px; margin-bottom: 4px; }
+        .host-notes textarea {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 11px;
+            padding: 4px 8px;
+            resize: vertical;
+            min-height: 40px;
+            outline: none;
+        }
+        .host-notes textarea:focus { border-color: var(--green-mid); }
+
+        /* Config panel */
+        .config-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 999;
+            justify-content: center;
+            align-items: center;
+        }
+        .config-overlay.visible { display: flex; }
+        .config-panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--green);
+            padding: 20px;
+            min-width: min(320px, 90vw);
+            max-width: 90vw;
+        }
+        .config-panel h3 {
+            color: var(--green);
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .config-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .config-row label { color: var(--text-dim); font-size: 12px; }
+        .config-row input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--green);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 3px 8px;
+            width: min(100px, 25vw);
+            outline: none;
+            text-align: right;
+        }
+        .config-panel button {
+            background: var(--bg);
+            border: 1px solid var(--green);
+            color: var(--green);
+            padding: 6px 20px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            margin-top: 12px;
+        }
+        .config-panel button:hover { background: var(--green-dim); }
+        .config-panel .close-btn {
+            border-color: var(--text-dim);
+            color: var(--text-dim);
+            margin-left: 8px;
+        }
+
+        /* Queue badge */
+        .queue-badge {
+            background: var(--yellow);
+            color: var(--bg);
+            padding: 0 6px;
+            border-radius: 2px;
+            font-size: 10px;
+            font-weight: bold;
+            margin-left: 4px;
+            display: none;
+        }
+        .queue-badge.visible { display: inline; }
+
+        /* Glitch effect for phase */
+        .glitch {
+            animation: glitch 0.3s ease;
+        }
+        @keyframes glitch {
+            0% { transform: translate(2px, -2px); filter: hue-rotate(90deg); }
+            25% { transform: translate(-2px, 2px); }
+            50% { transform: translate(1px, 1px); filter: hue-rotate(0deg); }
+            75% { transform: translate(-1px, -1px); }
+            100% { transform: translate(0, 0); }
+        }
+
+        /* Pulse for active elements */
+        .pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        /* Toast notifications */
+        #toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column-reverse;
+            gap: 8px;
+        }
+        .toast {
+            padding: 12px 20px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-width: 400px;
+            animation: toastIn 0.3s ease-out, toastOut 0.3s ease-in 14.7s forwards;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        .toast.success { background: #0a1a0a; border: 1px solid var(--green); color: var(--green); }
+        .toast.info { background: #0a0a1a; border: 1px solid #4488ff; color: #4488ff; }
+        .toast.warning { background: #1a1a0a; border: 1px solid var(--yellow); color: var(--yellow); }
+        @keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+    </style>
+</head>
+<body>
+    <div id="toast-container"></div>
+    <canvas id="matrix-bg"></canvas>
+    <div class="container">
+        <!-- Banner -->
+        <div class="banner">
+ ░█▄░█ █ █▀▀ █░█ ▀█▀ █▀▀ █▀█ ▄▀█ █░█░█ █░░ █▀▀ █▀█
+ ░█░▀█ █ █▄█ █▀█ ░█░ █▄▄ █▀▄ █▀█ ▀▄▀▄▀ █▄▄ ██▄ █▀▄
+            <span class="version">v0.1.0 — AUTONOMOUS MOBILE PENTEST AGENT</span>
+        </div>
+
+        <!-- Network Selector -->
+        <div class="network-bar">
+            <label>NETWORK:</label>
+            <button class="network-btn active" id="net-all" onclick="selectNetwork(null)">ALL</button>
+            <span id="network-buttons"></span>
+        </div>
+
+        <!-- Network Edit Modal -->
+        <div id="net-edit-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:2000; justify-content:center; align-items:center;">
+            <div style="background:var(--bg-panel); border:1px solid var(--green); padding:20px; max-width:500px; width:90%; margin:auto; margin-top:15vh;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+                    <span style="color:var(--green); font-weight:bold;">EDIT NETWORK</span>
+                    <span style="cursor:pointer; color:var(--text-dim);" onclick="closeNetEdit()">✕</span>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">NETWORK ID</label>
+                    <div id="net-edit-id" style="color:var(--cyan); font-size:12px;"></div>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">CIDR</label>
+                    <div id="net-edit-cidr" style="color:var(--text); font-size:12px;"></div>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">GATEWAY MAC</label>
+                    <div id="net-edit-mac" style="color:var(--text); font-size:12px;"></div>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">PUBLIC IP</label>
+                    <div id="net-edit-pubip" style="color:var(--text); font-size:12px;"></div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">DISPLAY NAME</label>
+                    <input type="text" id="net-edit-name" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--green); padding:6px 8px; font-family:inherit; font-size:13px;" placeholder="e.g. Client Office A">
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">NOTES</label>
+                    <textarea id="net-edit-notes" rows="3" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 8px; font-family:inherit; font-size:12px; resize:vertical;" placeholder="Analyst notes about this network..."></textarea>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">OBSERVATIONS (auto + analyst)</label>
+                    <div id="net-edit-obs" style="max-height:120px; overflow-y:auto; font-size:11px; color:var(--text-dim); margin-bottom:6px;"></div>
+                    <div style="display:flex; gap:4px;">
+                        <input type="text" id="net-edit-obs-input" onclick="event.stopPropagation()" placeholder="Add observation..." style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--green); padding:3px 6px; font-family:inherit; font-size:11px;">
+                        <button onclick="addNetObservation()" style="background:var(--bg); border:1px solid var(--border); color:var(--green); padding:3px 8px; cursor:pointer; font-size:11px;">+</button>
+                    </div>
+                </div>
+                <div id="net-edit-scanned" style="margin-bottom:12px; font-size:10px; color:var(--text-dim);"></div>
+                <button onclick="saveNetEdit()" style="background:var(--green-dim); border:1px solid var(--green); color:var(--green); padding:6px 16px; cursor:pointer; font-family:inherit; font-size:13px; width:100%;">SAVE</button>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div>
+                <div class="status-item">
+                    <span class="status-label">PHASE</span>
+                    <span class="status-value phase" id="s-phase">INIT</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">MODE</span>
+                    <span class="status-value" id="s-mode">LOCAL</span>
+                </div>
+            </div>
+            <div>
+                <div class="status-item">
+                    <span class="status-label">UPTIME</span>
+                    <span class="status-value" id="s-uptime">00:00:00</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">THOR</span>
+                    <span class="status-value offline" id="s-thor">OFFLINE</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">CMDS / BLOCKED / ERRS</span>
+                    <span class="status-value" id="s-stats">0 / 0 / 0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Bar (Online only) -->
+        <div class="control-bar online-only">
+            <button id="pause-btn" onclick="togglePause()">&#9208; PAUSE</button>
+            <span class="control-label">PHASE:</span>
+            <button id="phase-recon" onclick="forcePhase('recon')">RECON</button>
+            <button id="phase-enumerate" onclick="forcePhase('enumerate')">ENUM</button>
+            <button id="phase-exploit" onclick="forcePhase('exploit')">EXPLOIT</button>
+            <button onclick="toggleConfig()">&#9881; CONFIG</button>
+            <span class="queue-badge" id="queue-badge">Q:0</span>
+            <button id="kill-btn" onclick="killSwitch()">&#9940; KILL</button>
+            <button onclick="generateReport()" style="border-color:#0af;color:#0af">&#128196; REPORT</button>
+            <button onclick="toggleOfflineMode()" style="border-color:#ffaa00;color:#ffaa00" id="offline-toggle-btn">&#128225; OFFLINE</button>
+            <span style="margin-left:12px;border-left:1px solid var(--border);padding-left:8px;">
+                <label style="color:var(--text-dim);font-size:10px;margin-right:4px;">COVER</label>
+                <input type="range" id="cover-slider" min="0" max="100" value="0" style="width:min(80px,20vw);vertical-align:middle;" oninput="updateCoverLabel()" onchange="setCoverTraffic()">
+                <span id="cover-label" style="color:#aa44ff;font-size:10px;min-width:30px;display:inline-block;">OFF</span>
+            </span>
+        </div>
+
+        <!-- Findings Summary (Online only) -->
+        <div class="findings-bar online-only">
+            <div class="finding-stat">
+                <div class="num" id="f-hosts">0</div>
+                <div class="label">Hosts</div>
+            </div>
+            <div class="finding-stat">
+                <div class="num" id="f-ports">0</div>
+                <div class="label">Ports</div>
+            </div>
+            <div class="finding-stat">
+                <div class="num" id="f-creds">0</div>
+                <div class="label">Creds</div>
+            </div>
+            <div class="finding-stat">
+                <div class="num" id="f-vulns">0</div>
+                <div class="label">Vulns</div>
+            </div>
+            <div class="finding-stat">
+                <div class="num" id="f-success" style="font-size:18px;">--%</div>
+                <div class="label">Success</div>
+            </div>
+            <div class="finding-stat">
+                <div class="num" id="f-agent-health" style="font-size:14px;color:var(--green);">&#9679;</div>
+                <div class="label" id="f-agent-label">Agent</div>
+            </div>
+        </div>
+
+        <div style="height: 10px;"></div>
+
+        <!-- ===== OFFLINE MODE PANELS ===== -->
+        <div class="offline-only" id="offline-panels">
+            <!-- Adapter Status -->
+            <div id="adapter-status" style="padding:6px 10px;margin-bottom:8px;font-size:11px;border:1px solid var(--border);background:var(--bg-panel);">
+                <span id="adapter-icon" style="margin-right:6px;">&#128268;</span>
+                <span id="adapter-text" style="color:var(--text-dim);">Checking adapter...</span>
+            </div>
+
+            <!-- Offline Control Bar — only SCAN + STOP are manual, rest is autonomous -->
+            <div class="offline-bar">
+                <button onclick="offlineScan()" id="offline-scan-btn">&#9654; SCAN</button>
+                <button onclick="offlineStopScan()" id="offline-stop-btn">&#9632; STOP</button>
+                <div class="stage-indicator" style="width:100%;margin-top:4px;display:flex;justify-content:center;gap:4px;">
+                    <span id="off-stage-0" class="stage-pill">&#128225; SCAN</span>
+                    <span class="stage-arrow">&rarr;</span>
+                    <span id="off-stage-1" class="stage-pill">&#127919; SELECT</span>
+                    <span class="stage-arrow">&rarr;</span>
+                    <span id="off-stage-2" class="stage-pill">&#128268; CAPTURE</span>
+                    <span class="stage-arrow">&rarr;</span>
+                    <span id="off-stage-3" class="stage-pill">&#9889; CRACK</span>
+                    <span class="stage-arrow">&rarr;</span>
+                    <span id="off-stage-4" class="stage-pill">&#128279; CONNECT</span>
+                </div>
+            </div>
+
+            <!-- Pwnagotchi-inspired face -->
+            <div class="offline-face" id="offline-face"><span class="face-inner" id="face-inner">(&#8226;_&#8226;)</span></div>
+
+            <div class="panels">
+                <!-- WiFi Networks -->
+                <div class="panel" style="grid-column: 1 / -1;">
+                    <div class="panel-header" style="color:#ffaa00;">
+                        DISCOVERED NETWORKS <span class="count" id="wifi-net-count" style="background:#ffaa00;color:#000;">0</span>
+                    </div>
+                    <div class="panel-body" id="wifi-networks-body" style="max-height:300px;overflow-y:auto;">
+                        <div style="color:var(--text-dim);">Click SCAN to discover WiFi networks...</div>
+                    </div>
+                </div>
+
+                <!-- Handshake Monitor -->
+                <div class="panel" style="grid-column: 1 / -1;" id="handshake-panel">
+                    <div class="panel-header" style="color:#ffaa00;">HANDSHAKE MONITOR</div>
+                    <div class="panel-body" id="handshake-monitor" style="padding:10px;">
+                        <div style="color:var(--text-dim);">Select a target network to begin capture...</div>
+                    </div>
+                </div>
+
+                <!-- WiFi Attack Log -->
+                <div class="panel" style="grid-column: 1 / -1;">
+                    <div class="panel-header" style="color:#ffaa00;">
+                        WIFI ATTACK LOG <span class="count" id="wifi-feed-count" style="background:#ffaa00;color:#000;">0</span>
+                    </div>
+                    <div class="panel-body" id="wifi-feed-body" style="max-height:250px;overflow-y:auto;">
+                        <div style="color:var(--text-dim);">Waiting for WiFi operations...</div>
+                    </div>
+                </div>
+
+                <!-- Captured Handshakes -->
+                <div class="panel" style="grid-column: 1 / -1;">
+                    <div class="panel-header" style="color:#ffaa00;">
+                        CAPTURED HANDSHAKES <span class="count" id="handshake-count" style="background:#ffaa00;color:#000;">0</span>
+                    </div>
+                    <div class="panel-body" id="handshakes-body" style="max-height:200px;overflow-y:auto;">
+                        <div style="color:var(--text-dim);">No handshakes captured yet...</div>
+                    </div>
+                </div>
+
+                <!-- Cracking Status (at bottom — only relevant after handshake capture) -->
+                <div class="panel" style="grid-column: 1 / -1;" id="crack-panel">
+                    <div class="panel-header" style="color:#ffaa00;">CRACKING STATUS</div>
+                    <div class="panel-body" id="crack-status" style="padding:10px;">
+                        <div style="color:var(--text-dim);">Capture a handshake first...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mobile Tab Bar (visible only on small screens) -->
+        <div class="tab-bar online-only" id="tab-bar">
+            <button class="tab-btn active" onclick="switchTab('all')">ALL</button>
+            <button class="tab-btn" onclick="switchTab('feed')">FEED</button>
+            <button class="tab-btn" onclick="switchTab('hosts')">HOSTS</button>
+            <button class="tab-btn" onclick="switchTab('vulns')">VULNS</button>
+            <button class="tab-btn" onclick="switchTab('intel')">INTEL</button>
+        </div>
+
+        <!-- ===== ONLINE MODE PANELS ===== -->
+        <div class="panels online-only" id="online-panels">
+            <!-- Live Feed -->
+            <div class="panel" style="grid-column: 1 / -1;" data-tab="feed">
+                <div class="panel-header">
+                    AGENT FEED <span class="count pulse" id="feed-count">0</span>
+                </div>
+                <div class="panel-body" id="feed-body">
+                    <div class="feed-entry">
+                        <span class="feed-ts">--:--:--</span>
+                        <span class="feed-type thought">SYS</span>
+                        <span class="feed-content">Waiting for agent...</span>
+                    </div>
+                </div>
+                <div class="command-input">
+                    <span class="prompt">$</span>
+                    <input type="text" id="cmd-input" placeholder="Inject command..." onkeydown="if(event.key==='Enter')injectCommand()">
+                    <button onclick="injectCommand()">INJECT</button>
+                </div>
+            </div>
+
+            <!-- Hosts (full width, interactive) -->
+            <div class="panel" style="grid-column: 1 / -1;" data-tab="hosts">
+                <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>DISCOVERED HOSTS <span class="count" id="hosts-count">0</span></span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <button id="map-toggle-btn" onclick="toggleMapView()" style="background:var(--bg);border:1px solid var(--green);color:var(--green);padding:3px 10px;cursor:pointer;font-family:inherit;font-size:10px;">MAP VIEW</button>
+                        <input type="text" id="host-search" placeholder="Filter hosts..." oninput="lastHostFingerprint='';pollFindings()" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:3px 8px;font-family:inherit;font-size:11px;width:min(200px,40vw);">
+                    </div>
+                </div>
+                <div class="panel-body" id="hosts-body">
+                </div>
+                <div id="map-container" style="display:none;position:relative;width:100%;height:min(450px, 60vh);background:#0a0a0a;border:1px solid var(--border);overflow:hidden;touch-action:none;">
+                    <canvas id="network-map" style="width:100%;height:100%;"></canvas>
+                </div>
+                <!-- Host detail modal -->
+                <div id="host-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:1000;overflow-y:auto;" onclick="if(event.target===this)closeHostModal()">
+                    <div style="max-width:600px;margin:20px auto;background:#0a0a0a;border:1px solid var(--green);padding:16px;position:relative;width:calc(100% - 32px);">
+                        <button onclick="closeHostModal()" style="position:absolute;top:10px;right:10px;background:none;border:1px solid var(--red);color:var(--red);cursor:pointer;padding:2px 8px;font-family:inherit;">X</button>
+                        <div id="host-modal-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vulnerabilities -->
+            <div class="panel" style="grid-column: 1 / -1;" data-tab="vulns">
+                <div class="panel-header">
+                    VULNERABILITIES <span class="count" id="vuln-count">0</span>
+                </div>
+                <div class="panel-body" id="vuln-body">
+                </div>
+            </div>
+
+            <!-- Credentials -->
+            <div class="panel" style="grid-column: 1 / -1;" data-tab="vulns">
+                <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>CREDENTIALS <span class="count" id="cred-count">0</span></span>
+                    <button onclick="openAddCred()" style="background:var(--bg);border:1px solid var(--green);color:var(--green);padding:2px 8px;cursor:pointer;font-size:10px;">+ ADD</button>
+                </div>
+                <div class="panel-body" id="cred-body">
+                </div>
+                <!-- Add credential form (hidden by default) -->
+                <div id="cred-form" style="display:none;padding:8px;border-top:1px solid var(--border);">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                        <select id="cred-service" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:3px;font-family:inherit;font-size:11px;">
+                            <option value="ssh">SSH</option>
+                            <option value="smb">SMB</option>
+                            <option value="vnc">VNC</option>
+                            <option value="telnet">Telnet</option>
+                            <option value="ftp">FTP</option>
+                            <option value="http">HTTP</option>
+                            <option value="mysql">MySQL</option>
+                            <option value="rdp">RDP</option>
+                            <option value="other">Other</option>
+                        </select>
+                        <input id="cred-user" placeholder="Username" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:3px 6px;font-family:inherit;font-size:11px;width:min(100px,25vw);">
+                        <input id="cred-pass" placeholder="Password" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:3px 6px;font-family:inherit;font-size:11px;width:min(100px,25vw);">
+                        <input id="cred-host" placeholder="Host IP (optional)" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:3px 6px;font-family:inherit;font-size:11px;width:min(120px,30vw);">
+                        <button onclick="saveCred()" style="background:var(--green);color:#000;border:none;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px;">SAVE</button>
+                        <button onclick="document.getElementById('cred-form').style.display='none'" style="background:var(--bg);border:1px solid var(--border);color:var(--text-dim);padding:3px 8px;cursor:pointer;font-family:inherit;font-size:11px;">CANCEL</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Throughput Timeline -->
+            <div class="panel" style="grid-column: 1 / -1;" data-tab="intel">
+                <div class="panel-header">
+                    THROUGHPUT TIMELINE <span class="count" id="throughput-rate">0 cmd/hr</span>
+                </div>
+                <div class="panel-body" id="throughput-body" style="height:80px;overflow:hidden;">
+                    <canvas id="throughput-canvas" style="width:100%;height:80px;cursor:crosshair;"></canvas>
+                </div>
+            </div>
+
+            <!-- Passive Capture -->
+            <div class="panel" style="grid-column: 1 / -1;" data-tab="intel">
+                <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>PASSIVE CAPTURE <span class="count" id="passive-count">0</span></span>
+                    <div>
+                        <span id="passive-networks" style="color:var(--red);font-size:10px;margin-right:8px;"></span>
+                        <button onclick="startPassiveCapture()" style="background:var(--bg);border:1px solid var(--green);color:var(--green);padding:2px 8px;cursor:pointer;font-size:10px;">CAPTURE</button>
+                    </div>
+                </div>
+                <div class="panel-body" id="passive-body" style="max-height:250px;overflow-y:auto;">
+                    <div style="color:var(--text-dim)">No passive captures yet — click CAPTURE to start</div>
+                </div>
+            </div>
+
+            <!-- Command History -->
+            <div class="panel" style="grid-column: 1 / -1;" data-tab="intel">
+                <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>COMMAND HISTORY</span>
+                    <div>
+                        <select id="cmd-filter-type" onchange="debounceSearch()" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:2px 4px;font-family:inherit;font-size:10px;">
+                            <option value="">All Tools</option>
+                            <option value="nmap">nmap</option>
+                            <option value="nxc">nxc</option>
+                            <option value="smbclient">smbclient</option>
+                            <option value="curl">curl</option>
+                            <option value="dig">dig</option>
+                            <option value="gobuster">gobuster</option>
+                            <option value="nikto">nikto</option>
+                            <option value="hydra">hydra</option>
+                            <option value="impacket">impacket</option>
+                        </select>
+                        <select id="cmd-filter-status" onchange="debounceSearch()" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:2px 4px;font-family:inherit;font-size:10px;">
+                            <option value="">All Status</option>
+                            <option value="success">Success</option>
+                            <option value="error">Error</option>
+                            <option value="blocked">Blocked</option>
+                        </select>
+                        <input type="text" class="search-input" id="cmd-search" placeholder="Search..." oninput="debounceSearch()" style="width:min(150px,35vw);">
+                    </div>
+                </div>
+                <div class="panel-body" id="cmd-history-body">
+                    <div style="color:var(--text-dim)">Type to search command history...</div>
+                </div>
+            </div>
+
+            <!-- Cover Traffic Audit (at bottom, less prominent) -->
+            <div class="panel" style="grid-column: 1 / -1;" id="cover-panel" data-tab="intel">
+                <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="color:#aa44ff;">COVER TRAFFIC <span class="count" id="cover-count" style="background:#aa44ff;">0</span></span>
+                    <span id="cover-status" style="color:var(--text-dim);font-size:10px;">OFF</span>
+                </div>
+                <div class="panel-body" id="cover-body" style="max-height:150px;overflow-y:auto;">
+                    <div style="color:var(--text-dim)">Cover traffic disabled — use the COVER slider above to enable stealth blending</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Config Overlay -->
+        <div class="config-overlay" id="config-overlay" onclick="if(event.target===this)toggleConfig()">
+            <div class="config-panel">
+                <h3>&#9881; AGENT CONFIG</h3>
+                <div class="config-row">
+                    <label>TEMPERATURE</label>
+                    <input type="number" id="cfg-temperature" step="0.1" min="0" max="2" value="0.7">
+                </div>
+                <div class="config-row">
+                    <label>MAX TOKENS</label>
+                    <input type="number" id="cfg-max-tokens" step="50" min="50" max="4096" value="512">
+                </div>
+                <div class="config-row">
+                    <label>DISABLED TOOLS</label>
+                    <input type="text" id="cfg-disabled" placeholder="nikto,sqlmap" style="width:min(150px,40vw)">
+                </div>
+                <div class="config-row">
+                    <label>PREFERRED TOOLS</label>
+                    <input type="text" id="cfg-preferred" placeholder="nmap,gobuster" style="width:min(150px,40vw)">
+                </div>
+                <div style="border-top:1px solid var(--border);margin:10px 0;padding-top:10px;">
+                    <h4 style="color:var(--cyan);margin:0 0 8px 0;font-size:12px;">OPERATING HOURS</h4>
+                    <div class="config-row">
+                        <label>ENABLED</label>
+                        <input type="checkbox" id="cfg-ophours-enabled">
+                    </div>
+                    <div class="config-row">
+                        <label>START HOUR (EDT)</label>
+                        <input type="number" id="cfg-ophours-start" min="0" max="23" value="7" style="width:60px">
+                    </div>
+                    <div class="config-row">
+                        <label>END HOUR (EDT)</label>
+                        <input type="number" id="cfg-ophours-end" min="0" max="23" value="23" style="width:60px">
+                    </div>
+                    <div style="color:var(--text-dim);font-size:10px;margin-top:4px;">Agent sleeps during off-hours. Passive capture stays active.</div>
+                </div>
+                <div style="text-align:right;margin-top:10px;">
+                    <button onclick="saveConfig()">SAVE</button>
+                    <button class="close-btn" onclick="toggleConfig()">CLOSE</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Network Info (hidden, used by JS) -->
+        <div id="net-info-data" style="display:none"></div>
+    </div>
+
+    <script>
+        // Matrix rain background
+        (function() {
+            const canvas = document.getElementById('matrix-bg');
+            const ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            const chars = 'ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘ012345789ABCDEF';
+            const fontSize = 14;
+            const cols = Math.floor(canvas.width / fontSize);
+            const drops = Array(cols).fill(1);
+
+            function draw() {
+                ctx.fillStyle = 'rgba(10, 10, 10, 0.05)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#00ff41';
+                ctx.font = fontSize + 'px monospace';
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = chars[Math.floor(Math.random() * chars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+            setInterval(draw, 50);
+
+            window.addEventListener('resize', () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+        })();
+
+        // C2 state
+        let agentPaused = false;
+        let agentKilled = false;
+        let starredMacs = new Set();
+        let blacklistedMacs = new Set();
+        let hostNotes = {};
+        let searchTimeout = null;
+
+        // Load initial C2 state
+        async function loadC2State() {
+            try {
+                const [statusResp, starredResp, configResp, toolsResp, queueResp] = await Promise.all([
+                    fetch('/api/agent/status'),
+                    fetch('/api/hosts/starred'),
+                    fetch('/api/config'),
+                    fetch('/api/tools/preferences'),
+                    fetch('/api/commands/queue'),
+                ]);
+                const status = await statusResp.json();
+                agentPaused = status.paused;
+                agentKilled = status.kill_switch;
+                updatePauseBtn();
+                updateKillBtn();
+
+                const starred = await starredResp.json();
+                starredMacs = new Set((starred || []).map(s => s.mac));
+
+                // Load blacklisted hosts
+                try {
+                    const blResp = await fetch('/api/hosts/blacklisted');
+                    const bl = await blResp.json();
+                    blacklistedMacs = new Set((bl || []).map(b => b.mac));
+                } catch(e) {}
+
+                const config = await configResp.json();
+                document.getElementById('cfg-temperature').value = config.temperature || 0.7;
+                document.getElementById('cfg-max-tokens').value = config.max_tokens || 512;
+
+                const tools = await toolsResp.json();
+                document.getElementById('cfg-disabled').value = (tools.disabled || []).join(',');
+                document.getElementById('cfg-preferred').value = (tools.preferred || []).join(',');
+
+                const queue = await queueResp.json();
+                updateQueueBadge(queue.length);
+            } catch(e) {}
+        }
+        loadC2State();
+        setInterval(loadC2State, 5000);
+
+        function updatePauseBtn() {
+            const btn = document.getElementById('pause-btn');
+            if (agentPaused) {
+                btn.textContent = '\u25B6 RESUME AGENT';
+                btn.classList.add('paused');
+                btn.style.borderColor = 'var(--yellow)';
+                btn.style.color = 'var(--yellow)';
+            } else {
+                btn.textContent = '\u23F8 PAUSE AGENT';
+                btn.classList.remove('paused');
+                btn.style.borderColor = '';
+                btn.style.color = '';
+            }
+        }
+
+        function updateKillBtn() {
+            const btn = document.getElementById('kill-btn');
+            if (agentKilled) {
+                btn.classList.add('killed');
+                btn.textContent = '\u26D4 KILLED';
+            }
+        }
+
+        function updateQueueBadge(count) {
+            const badge = document.getElementById('queue-badge');
+            if (count > 0) {
+                badge.textContent = 'Q:' + count;
+                badge.classList.add('visible');
+            } else {
+                badge.classList.remove('visible');
+            }
+        }
+
+        async function togglePause() {
+            const endpoint = agentPaused ? '/api/agent/resume' : '/api/agent/pause';
+            try {
+                const resp = await fetch(endpoint, { method: 'POST' });
+                const data = await resp.json();
+                agentPaused = data.paused;
+                updatePauseBtn();
+                if (agentPaused) {
+                    showToast('Agent paused and killed — watchdog will not restart. LLM still running.', 'info');
+                } else {
+                    showToast('Agent unpaused — watchdog will restart agent shortly.', 'info');
+                }
+            } catch(e) {}
+        }
+
+        async function forcePhase(phase) {
+            try {
+                await fetch('/api/phase', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({phase: phase})
+                });
+                document.querySelectorAll('.control-bar button[id^="phase-"]').forEach(b => b.classList.remove('active-phase'));
+                const btn = document.getElementById('phase-' + phase);
+                if (btn) btn.classList.add('active-phase');
+            } catch(e) {}
+        }
+
+        async function killSwitch() {
+            if (!window.confirm('KILL SWITCH: This will immediately halt all agent operations. Are you sure?')) return;
+            try {
+                await fetch('/api/killswitch', { method: 'POST' });
+                agentKilled = true;
+                agentPaused = true;
+                updateKillBtn();
+                updatePauseBtn();
+            } catch(e) {}
+        }
+
+        async function generateReport() {
+            try {
+                // Generate the full markdown report server-side
+                const netParam = selectedNetwork ? '?network=' + encodeURIComponent(selectedNetwork) : '';
+                const genResp = await fetch('/api/report/generate' + netParam, {method: 'POST'});
+                const genData = await genResp.json();
+                if (genData.ok) {
+                    // Download the markdown file
+                    const mdResp = await fetch('/api/report/download');
+                    const text = await mdResp.text();
+                    const blob = new Blob([text], {type: 'text/markdown'});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `nightcrawler-report-${new Date().toISOString().slice(0,10)}.md`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                } else {
+                    alert('Report generation failed: ' + (genData.error || 'Unknown'));
+                }
+            } catch(e) {
+                alert('Report generation failed: ' + e.message);
+            }
+        }
+
+        function toggleConfig() {
+            const overlay = document.getElementById('config-overlay');
+            overlay.classList.toggle('visible');
+            if (overlay.classList.contains('visible')) loadOperatingHours();
+        }
+
+        async function saveConfig() {
+            const temp = parseFloat(document.getElementById('cfg-temperature').value);
+            const maxT = parseInt(document.getElementById('cfg-max-tokens').value);
+            const disabled = document.getElementById('cfg-disabled').value.split(',').map(s => s.trim()).filter(Boolean);
+            const preferred = document.getElementById('cfg-preferred').value.split(',').map(s => s.trim()).filter(Boolean);
+            const opEnabled = document.getElementById('cfg-ophours-enabled').checked;
+            const opStart = parseInt(document.getElementById('cfg-ophours-start').value);
+            const opEnd = parseInt(document.getElementById('cfg-ophours-end').value);
+
+            try {
+                await Promise.all([
+                    fetch('/api/config', {
+                        method: 'PATCH',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({temperature: temp, max_tokens: maxT})
+                    }),
+                    fetch('/api/tools/preferences', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({disabled: disabled, preferred: preferred})
+                    }),
+                    fetch('/api/operating-hours', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({enabled: opEnabled, start: opStart, end: opEnd})
+                    })
+                ]);
+                toggleConfig();
+            } catch(e) {}
+        }
+
+        // Load operating hours on config open
+        async function loadOperatingHours() {
+            try {
+                const resp = await fetch('/api/operating-hours');
+                const data = await resp.json();
+                document.getElementById('cfg-ophours-enabled').checked = data.enabled || false;
+                document.getElementById('cfg-ophours-start').value = data.start || 7;
+                document.getElementById('cfg-ophours-end').value = data.end || 23;
+            } catch(e) {}
+        }
+
+        async function injectCommand() {
+            const input = document.getElementById('cmd-input');
+            const cmd = input.value.trim();
+            if (!cmd) return;
+            try {
+                const resp = await fetch('/api/commands/queue', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: cmd})
+                });
+                const data = await resp.json();
+                updateQueueBadge((data.queue || []).length);
+                input.value = '';
+            } catch(e) {}
+        }
+
+        async function toggleStar(mac, evt) {
+            evt.stopPropagation();
+            if (starredMacs.has(mac)) {
+                await fetch('/api/hosts/star', {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mac: mac})
+                });
+                starredMacs.delete(mac);
+            } else {
+                await fetch('/api/hosts/star', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mac: mac, iterations: 5})
+                });
+                starredMacs.add(mac);
+            }
+            lastHostFingerprint = '';
+            pollFindings();
+        }
+
+        async function addObservation(mac, ip) {
+            const input = document.getElementById('obs-' + mac.replace(/:/g, '-'));
+            if (!input || !input.value.trim()) return;
+            await fetch('/api/hosts/' + encodeURIComponent(mac) + '/memory', {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({observation: input.value.trim(), ip: ip})
+            });
+            input.value = '';
+            lastHostFingerprint = '';
+            pollFindings();
+        }
+
+        async function setHostStatus(mac, status) {
+            await fetch('/api/hosts/' + encodeURIComponent(mac) + '/memory', {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({status: status})
+            });
+        }
+
+        async function toggleBlacklist(mac, ip, evt) {
+            evt.stopPropagation();
+            if (blacklistedMacs.has(mac)) {
+                await fetch('/api/hosts/blacklist', {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mac: mac})
+                });
+                blacklistedMacs.delete(mac);
+            } else {
+                await fetch('/api/hosts/blacklist', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mac: mac, ip: ip})
+                });
+                blacklistedMacs.add(mac);
+            }
+            lastHostFingerprint = '';
+            pollFindings();
+        }
+
+        async function saveHostNote(mac) {
+            const ta = document.getElementById('notes-' + mac.replace(/:/g, '-'));
+            if (!ta) return;
+            const note = ta.value;
+            hostNotes[mac] = note;
+            try {
+                await fetch('/api/hosts/' + encodeURIComponent(mac) + '/notes', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({note: note})
+                });
+            } catch(e) {}
+        }
+
+        function debounceSearch() {
+            if (searchTimeout) clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(searchCommands, 400);
+        }
+
+        async function searchCommands() {
+            const q = document.getElementById('cmd-search').value.trim();
+            const toolFilter = document.getElementById('cmd-filter-type')?.value || '';
+            const statusFilter = document.getElementById('cmd-filter-status')?.value || '';
+            const body = document.getElementById('cmd-history-body');
+            const searchTerm = [q, toolFilter, statusFilter].filter(Boolean).join(' ');
+            if (!searchTerm) {
+                body.innerHTML = '<div style="color:var(--text-dim)">Use filters or search to browse command history...</div>';
+                return;
+            }
+            try {
+                const resp = await fetch('/api/commands/search?q=' + encodeURIComponent(searchTerm) + '&limit=50');
+                const data = await resp.json();
+                const cmds = data.commands || [];
+                const tl = data.timeline || [];
+                body.innerHTML = '';
+                if (cmds.length === 0 && tl.length === 0) {
+                    body.innerHTML = '<div style="color:var(--text-dim)">No results for "' + esc(q) + '"</div>';
+                    return;
+                }
+                for (const c of cmds) {
+                    const div = document.createElement('div');
+                    div.className = 'cmd-history-entry';
+                    const ts = (c.timestamp || '').split('T')[1]?.split('Z')[0] || '';
+                    const statusCls = c.allowed ? 'status-ok' : 'status-err';
+                    const statusTxt = c.allowed ? 'allowed' : 'blocked';
+                    div.innerHTML = '<span class="ts">' + esc(ts) + '</span> ' +
+                        '<span class="cmd">' + esc(c.command) + '</span> ' +
+                        '<span class="' + statusCls + '">[' + statusTxt + ']</span>';
+                    body.appendChild(div);
+                }
+                for (const t of tl) {
+                    const div = document.createElement('div');
+                    div.className = 'cmd-history-entry';
+                    const ts = (t.timestamp || '').split('T')[1]?.split('Z')[0] || '';
+                    div.innerHTML = '<span class="ts">' + esc(ts) + '</span> ' +
+                        '<span class="cmd">' + esc(t.command || '') + '</span> ' +
+                        '<span class="' + (t.status === 'success' ? 'status-ok' : 'status-err') + '">[' + esc(t.status || '') + ']</span>';
+                    body.appendChild(div);
+                }
+            } catch(e) { body.innerHTML = '<div style="color:var(--red)">Search error</div>'; }
+        }
+
+        // State polling
+        let lastPhase = '';
+        let feedDataGlobal = [];  // Shared feed data for sparklines
+
+        async function pollState() {
+            try {
+                const netParam = selectedNetwork ? '?network=' + encodeURIComponent(selectedNetwork) : '';
+                const resp = await fetch('/api/state' + netParam);
+                const state = await resp.json();
+
+                // Update status bar
+                const phaseEl = document.getElementById('s-phase');
+                if (state.phase !== lastPhase) {
+                    phaseEl.classList.add('glitch');
+                    setTimeout(() => phaseEl.classList.remove('glitch'), 300);
+                    lastPhase = state.phase;
+                }
+                phaseEl.textContent = state.phase;
+                // Highlight current phase button
+                ['recon','enumerate','exploit'].forEach(p => {
+                    const btn = document.getElementById('phase-' + p);
+                    if (btn) btn.style.borderColor = (state.phase||'').toLowerCase().includes(p) ? 'var(--green)' : 'var(--border)';
+                });
+                document.getElementById('s-mode').textContent = state.mode;
+                document.getElementById('s-uptime').textContent = state.uptime;
+
+                const thorEl = document.getElementById('s-thor');
+                thorEl.textContent = state.thor_online ? 'ONLINE' : 'OFFLINE';
+                thorEl.className = 'status-value ' + (state.thor_online ? '' : 'offline');
+
+                document.getElementById('s-stats').textContent =
+                    `${state.commands_total} / ${state.commands_blocked} / ${state.errors}`;
+
+                // Feature 8: Success rate + Agent health
+                const total = state.commands_total || 0;
+                const blocked = state.commands_blocked || 0;
+                const errs = state.errors || 0;
+                const success = total > 0 ? Math.round(((total - blocked - errs) / total) * 100) : 0;
+                const fSuccess = document.getElementById('f-success');
+                if (fSuccess) fSuccess.textContent = total > 0 ? success + '%' : '--%';
+
+                const agentEl = document.getElementById('f-agent-health');
+                const agentLabel = document.getElementById('f-agent-label');
+                if (agentEl) {
+                    const lastCmd = state.last_command_ts || '';
+                    const isAlive = state.uptime && state.uptime !== '00:00:00';
+                    agentEl.innerHTML = isAlive ? '&#9679;' : '&#9675;';
+                    agentEl.style.color = isAlive ? 'var(--green)' : 'var(--red)';
+                    if (agentLabel) agentLabel.textContent = isAlive ? 'Agent' : 'Agent DOWN';
+                }
+
+                // Findings counters updated by pollFindings only (avoids flashing)
+
+                // Update feed — show last 200, reverse-paginate on scroll up
+                const feedBody = document.getElementById('feed-body');
+                const feed = state.feed || [];
+                feedDataGlobal = feed;  // Share for sparklines
+                const FEED_PAGE = 200;
+                window._fullFeed = feed;  // store for reverse pagination
+                const displayCount = Math.min(feed.length, FEED_PAGE);
+                document.getElementById('feed-count').textContent = feed.length > FEED_PAGE ? FEED_PAGE + '+' : feed.length;
+
+                // Only append NEW entries from the last 200
+                const visibleFeed = feed.slice(-FEED_PAGE);
+                const currentCount = feedBody.children.length;
+                if (visibleFeed.length > currentCount || currentCount <= 1) {
+                    const startIdx = currentCount <= 1 ? 0 : Math.max(0, currentCount - (feed.length > FEED_PAGE ? 0 : 0));
+                    if (startIdx === 0 || currentCount <= 1) {
+                        feedBody.innerHTML = '';
+                        // Add "load more" sentinel at top if there are older entries
+                        if (feed.length > FEED_PAGE) {
+                            const loadMore = document.createElement('div');
+                            loadMore.id = 'feed-load-more';
+                            loadMore.style.cssText = 'text-align:center;padding:6px;color:var(--text-dim);font-size:10px;cursor:pointer;';
+                            loadMore.textContent = `↑ ${feed.length - FEED_PAGE} older entries — scroll up to load`;
+                            feedBody.appendChild(loadMore);
+                        }
+                        for (const e of visibleFeed) feedBody.appendChild(createFeedEntry(e));
+                    } else {
+                        // Append only new entries
+                        for (let i = currentCount - (feed.length > FEED_PAGE ? 1 : 0); i < visibleFeed.length; i++) {
+                            if (i >= 0) feedBody.appendChild(createFeedEntry(visibleFeed[i]));
+                        }
+                    }
+                    const nearBottom = feedBody.scrollHeight - feedBody.scrollTop - feedBody.clientHeight < 100;
+                    if (nearBottom) feedBody.scrollTop = feedBody.scrollHeight;
+                }
+
+                // Hosts and creds/vulns are rendered by pollFindings only
+                // (pollState just updates the counters in the status bar)
+
+            } catch (e) {
+                console.error('Poll error:', e);
+            }
+        }
+
+        function createFeedEntry(entry) {
+            const div = document.createElement('div');
+            div.className = 'feed-entry';
+            const contentClass = entry.type === 'command' ? 'feed-content cmd' : 'feed-content';
+            div.innerHTML = `<span class="feed-ts">${esc(entry.ts)}</span>` +
+                `<span class="feed-type ${esc(entry.type)}">${esc(entry.type.toUpperCase())}</span>` +
+                `<span class="${contentClass}">${esc(entry.content)}</span>`;
+            return div;
+        }
+
+        function esc(s) {
+            if (s == null) return '';
+            const div = document.createElement('div');
+            div.textContent = String(s);
+            return div.innerHTML;
+        }
+
+        // Network selection
+        let selectedNetwork = null;
+        let selectedNetworkCidr = null;  // e.g., "192.168.1.0/24"
+        // Auto-select current network on page load
+        (async function() {
+            try {
+                const resp = await fetch('/api/current-network');
+                const data = await resp.json();
+                if (data.network_id) {
+                    selectedNetwork = data.network_id;
+                    selectedNetworkCidr = data.cidr || null;
+                    // Update button states after networks load
+                    setTimeout(() => {
+                        document.querySelectorAll('.network-btn').forEach(b => b.classList.remove('active'));
+                        const btn = document.getElementById('net-' + data.network_id);
+                        if (btn) btn.classList.add('active');
+                        pollState();
+                        pollFindings();
+                    }, 2000);
+                }
+            } catch(e) {}
+        })();
+
+        function selectNetwork(network, cidr) {
+            selectedNetwork = network;
+            selectedNetworkCidr = cidr || null;
+            document.querySelectorAll('.network-btn').forEach(b => b.classList.remove('active'));
+            if (network) {
+                const btn = document.getElementById('net-' + network.replace(/[/.]/g, '-'));
+                if (btn) btn.classList.add('active');
+            } else {
+                document.getElementById('net-all').classList.add('active');
+            }
+            lastHostFingerprint = ''; // force re-render
+            pollFindings();
+        }
+
+        // Load available networks
+        async function loadNetworks() {
+            try {
+                const resp = await fetch('/api/networks');
+                const nets = await resp.json();
+                const container = document.getElementById('network-buttons');
+                container.innerHTML = '';
+                for (const n of nets) {
+                    const nid = n.network_id || n.cidr;
+                    const wrap = document.createElement('span');
+                    wrap.style.display = 'inline-flex';
+                    wrap.style.gap = '0';
+
+                    const btn = document.createElement('button');
+                    btn.className = 'network-btn' + (selectedNetwork === nid ? ' active' : '');
+                    btn.id = 'net-' + nid;
+                    btn.textContent = n.display_name || n.ssid || n.cidr;
+                    if (n.gateway_mac) btn.title = 'Gateway: ' + n.gateway_mac;
+                    btn.onclick = () => selectNetwork(nid, n.cidr);
+
+                    const edit = document.createElement('button');
+                    edit.className = 'network-btn';
+                    edit.style.padding = '3px 6px';
+                    edit.style.borderLeft = 'none';
+                    edit.textContent = '✎';
+                    edit.title = 'Edit network';
+                    edit.onclick = (e) => { e.stopPropagation(); openNetEdit(n); };
+
+                    const del_btn = document.createElement('button');
+                    del_btn.className = 'network-btn';
+                    del_btn.style.cssText = 'padding:3px 6px;border-left:none;color:var(--red);';
+                    del_btn.textContent = '\u2716';
+                    del_btn.title = 'Delete network and all data';
+                    del_btn.onclick = (e) => { e.stopPropagation(); deleteNetwork(nid, btn.textContent); };
+
+                    wrap.appendChild(btn);
+                    wrap.appendChild(edit);
+                    wrap.appendChild(del_btn);
+                    container.appendChild(wrap);
+                }
+            } catch (e) {}
+        }
+        function showToast(message, type = 'info', duration = 15000) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + type;
+            toast.textContent = message;
+            toast.style.animation = `toastIn 0.3s ease-out, toastOut 0.3s ease-in ${(duration - 300)/1000}s forwards`;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), duration);
+        }
+
+        async function deleteNetwork(networkId, networkName) {
+            if (!confirm('DELETE NETWORK: ' + networkName + '?\n\nThis will permanently delete ALL data:\n- Hosts\n- Vulnerabilities\n- Credentials\n- Commands\n- Memories\n\nThis cannot be undone.')) return;
+            if (!confirm('Are you absolutely sure? Type the network name in the next prompt.')) return;
+            const confirmName = prompt('Type the network name to confirm deletion:');
+            if (confirmName !== networkName) {
+                showToast('Deletion cancelled — name did not match.', 'warning');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/networks/' + encodeURIComponent(networkId), {method: 'DELETE'});
+                const data = await resp.json();
+                if (data.ok) {
+                    const d = data.deleted;
+                    showToast(`Network deleted: ${d.hosts} hosts, ${d.vulnerabilities} vulns, ${d.credentials} creds removed.`, 'success');
+                    showToast('Agent paused — waiting 2 minutes before restarting with clean slate...', 'info');
+                    selectedNetwork = null;
+                    loadNetworks();
+                    pollState();
+                    pollFindings();
+                    // Show restart toast after 2 minutes
+                    setTimeout(() => {
+                        showToast('Agent restarted — fresh reconnaissance beginning on network.', 'success');
+                    }, 125000);
+                } else {
+                    showToast('Delete failed: ' + (data.error || 'Unknown error'), 'warning');
+                }
+            } catch(e) {
+                showToast('Delete failed: ' + e.message, 'warning');
+            }
+        }
+
+        setInterval(loadNetworks, 10000);
+        loadNetworks();
+
+        // Network edit modal
+        let editingNetworkId = null;
+        function openNetEdit(net) {
+            editingNetworkId = net.network_id || net.cidr;
+            document.getElementById('net-edit-id').textContent = editingNetworkId;
+            document.getElementById('net-edit-cidr').textContent = net.cidr || '?';
+            document.getElementById('net-edit-mac').textContent = net.gateway_mac || 'unknown';
+            document.getElementById('net-edit-pubip').textContent = net.public_ip || 'unknown';
+            document.getElementById('net-edit-name').value = net.display_name || net.ssid || '';
+            document.getElementById('net-edit-notes').value = net.notes || '';
+            document.getElementById('net-edit-modal').style.display = 'flex';
+            // Load network memory
+            fetch('/api/networks/' + encodeURIComponent(editingNetworkId) + '/memory')
+                .then(r => r.json()).then(mem => {
+                    const obsEl = document.getElementById('net-edit-obs');
+                    const obs = mem.observations || [];
+                    if (obs.length === 0) {
+                        obsEl.innerHTML = '<div style="color:var(--text-dim)">No observations yet</div>';
+                    } else {
+                        obsEl.innerHTML = obs.map(o =>
+                            `<div style="padding:1px 0;color:${o.source==='analyst'?'var(--yellow)':'var(--text-dim)'}">[${esc(o.source)}] ${esc(o.text)}</div>`
+                        ).join('');
+                    }
+                    const scanned = mem.scanned_ips || [];
+                    document.getElementById('net-edit-scanned').textContent =
+                        scanned.length ? `Scanned IPs (${scanned.length}): ${scanned.join(', ')}` : '';
+                }).catch(() => {});
+        }
+        async function addNetObservation() {
+            const input = document.getElementById('net-edit-obs-input');
+            if (!input || !input.value.trim() || !editingNetworkId) return;
+            await fetch('/api/networks/' + encodeURIComponent(editingNetworkId), {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({observation: input.value.trim()})
+            });
+            input.value = '';
+            openNetEdit({network_id: editingNetworkId, cidr: document.getElementById('net-edit-cidr').textContent,
+                gateway_mac: document.getElementById('net-edit-mac').textContent,
+                public_ip: document.getElementById('net-edit-pubip').textContent,
+                display_name: document.getElementById('net-edit-name').value,
+                notes: document.getElementById('net-edit-notes').value});
+        }
+        function closeNetEdit() {
+            document.getElementById('net-edit-modal').style.display = 'none';
+            editingNetworkId = null;
+        }
+        async function saveNetEdit() {
+            if (!editingNetworkId) return;
+            const name = document.getElementById('net-edit-name').value;
+            const notes = document.getElementById('net-edit-notes').value;
+            await fetch('/api/networks/' + encodeURIComponent(editingNetworkId), {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, notes})
+            });
+            closeNetEdit();
+            loadNetworks();
+        }
+
+        // Parse port/service pairs from info string
+        function parseServices(info) {
+            const services = {};
+            if (!info) return services;
+            const parts = info.split(', ');
+            for (const p of parts) {
+                const m = p.match(/^(\d+)\/(\S+)/);
+                if (m) services[parseInt(m[1])] = m[2];
+            }
+            return services;
+        }
+
+        // Render interactive host cards
+        let expandedHost = null;
+        let expandedVuln = null;
+        let lastHostFingerprint = '';
+
+        async function pollFindings() {
+            try {
+                const url = selectedNetwork
+                    ? '/api/export/' + encodeURIComponent(selectedNetwork)
+                    : '/api/findings';
+                const resp = await fetch(url);
+                // export endpoint wraps in {findings: {...}}, findings returns directly
+                const raw = await resp.json();
+                const data = raw.findings || raw;
+
+                document.getElementById('f-hosts').textContent = data.live_hosts || 0;
+                document.getElementById('f-creds').textContent = data.credentials || 0;
+                document.getElementById('f-vulns').textContent = data.vulnerabilities || 0;
+
+                let totalPorts = 0;
+                let hosts = data.hosts || [];
+                for (const h of hosts) totalPorts += (h.ports || []).length;
+                document.getElementById('f-ports').textContent = totalPorts;
+
+                // Sort hosts by IP (numeric)
+                hosts.sort((a, b) => {
+                    const pa = (a.ip||'').split('.').map(Number);
+                    const pb = (b.ip||'').split('.').map(Number);
+                    for (let i = 0; i < 4; i++) { if (pa[i] !== pb[i]) return pa[i] - pb[i]; }
+                    return 0;
+                });
+
+                // Apply search filter
+                const hostSearch = (document.getElementById('host-search') || {}).value || '';
+                if (hostSearch) {
+                    const q = hostSearch.toLowerCase();
+                    hosts = hosts.filter(h =>
+                        (h.ip||'').includes(q) || (h.hostname||'').toLowerCase().includes(q) ||
+                        (h.mac||'').toLowerCase().includes(q) || (h.info||'').toLowerCase().includes(q)
+                    );
+                }
+
+                // Render host cards — only re-render if data changed
+                const hostsBody = document.getElementById('hosts-body');
+                document.getElementById('hosts-count').textContent = hosts.length;
+
+                // Fingerprint: host count + total ports + expanded state + search
+                const fingerprint = hosts.map(h => h.ip + ':' + (h.ports||[]).length).join(',') + '|' + (expandedHost||'') + '|' + hostSearch;
+                const dataChanged = fingerprint !== lastHostFingerprint;
+                lastHostFingerprint = fingerprint;
+
+                // Update map data
+                if (typeof updateMapData === 'function') {
+                    try { updateMapData(hosts, data.vulns || []); } catch(e) {}
+                }
+
+                if (hosts.length > 0 && dataChanged) {
+                    hostsBody.innerHTML = '';
+                    for (const h of hosts) {
+                        const services = parseServices(h.info);
+                        const isExpanded = expandedHost === h.ip;
+                        const card = document.createElement('div');
+                        card.className = 'host-card' + (isExpanded ? ' expanded' : '');
+                        card.onclick = () => { expandedHost = isExpanded ? null : h.ip; pollFindings(); };
+
+                        const mac = h.mac || '';
+                        const isStarred = starredMacs.has(mac);
+                        const isBlacklisted = blacklistedMacs.has(mac);
+                        const macSafe = mac.replace(/:/g, '-');
+
+                        // Port lines for expanded view
+                        let portLines = '';
+                        for (const port of (h.ports || [])) {
+                            const svc = services[port] || 'unknown';
+                            portLines += `<div class="port-line">
+                                <span class="port-num">${port}/tcp</span>
+                                <span class="port-service">${esc(svc)}</span>
+                                <span class="port-state">open</span>
+                            </div>`;
+                        }
+                        if (!portLines) portLines = '<div style="color:var(--text-dim)">No open ports detected</div>';
+
+                        // Notes for expanded view
+                        const noteVal = hostNotes[mac] || '';
+                        const notesHtml = `<div class="host-notes">
+                            <div class="host-notes-title">OPERATOR NOTES</div>
+                            <textarea id="notes-${macSafe}" placeholder="Add notes about this host..." onblur="saveHostNote('${esc(mac)}')" onclick="event.stopPropagation()">${esc(noteVal)}</textarea>
+                        </div>`;
+
+                        card.innerHTML = `
+                            <div class="host-card-header">
+                                <div style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                                    <span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${esc(mac)}', event)" title="Star: prioritize scanning">\u2B50</span>
+                                    <span class="blacklist-icon ${isBlacklisted ? 'active' : ''}" onclick="toggleBlacklist('${esc(mac)}', '${esc(h.ip)}', event)" title="Blacklist: skip this host">\u26D4</span>
+                                    <span class="host-ip" style="${isBlacklisted ? 'text-decoration:line-through; opacity:0.5' : ''}">${esc(h.ip)}</span>
+                                    ${h.hostname ? `<span class="host-hostname"> (${esc(h.hostname)})</span>` : ''}
+                                    ${(() => { const m = (h.info||'').match(/\(([^)]+)\)\s*$/); return m ? `<span style="color:var(--cyan);font-size:11px;margin-left:4px">${esc(m[1])}</span>` : ''; })()}
+                                    <span style="color:var(--text-dim); margin-left:8px">${(h.ports||[]).length} ports</span>
+                                </div>
+                                <div style="flex-shrink:0;display:flex;align-items:center;gap:4px">
+                                    <canvas class="host-sparkline" id="spark-${macSafe}" width="50" height="14"></canvas>
+                                    <span class="host-mac">${esc(h.mac || '')}</span>
+                                </div>
+                            </div>
+                            <div class="host-detail">
+                                <div style="margin-bottom:4px;color:var(--text-dim);font-size:10px">
+                                    Network: ${esc(h.network || '?')} | First seen: ${esc(h.first_seen || '?')} | Last: ${esc(h.last_seen || '?')}
+                                </div>
+                                ${portLines}
+                                <div id="memory-${mac.replace(/:/g,'-')}" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+                                    <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">MEMORY / OBSERVATIONS</div>
+                                    <div style="color:var(--text-dim);font-size:11px">Loading...</div>
+                                </div>
+                                <div class="host-history" id="history-${esc(h.ip)}">
+                                    <div class="host-history-title">SCAN HISTORY</div>
+                                    <div style="color:var(--text-dim);font-size:11px">Loading...</div>
+                                </div>
+                                ${notesHtml}
+                            </div>`;
+                        hostsBody.appendChild(card);
+
+                        // Load notes for expanded host
+                        if (isExpanded && !hostNotes[mac]) {
+                            fetch('/api/hosts/' + encodeURIComponent(mac) + '/notes')
+                                .then(r => r.json())
+                                .then(data => {
+                                    if (data.note) {
+                                        hostNotes[mac] = data.note;
+                                        const ta = document.getElementById('notes-' + macSafe);
+                                        if (ta) ta.value = data.note;
+                                    }
+                                }).catch(() => {});
+                        }
+
+                        // Load history for expanded host
+                        if (isExpanded) {
+                            // Load host memory
+                            fetch('/api/hosts/' + encodeURIComponent(mac) + '/memory')
+                                .then(r => r.json())
+                                .then(mem => {
+                                    const el = document.getElementById('memory-' + mac.replace(/:/g, '-'));
+                                    if (!el) return;
+                                    let html = '<div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">MEMORY / OBSERVATIONS';
+                                    if (mem.status) html += ` <span style="color:var(${mem.status==='interesting'?'--yellow':mem.status==='dead-end'?'--red':'--text-dim'})">[${esc(mem.status)}]</span>`;
+                                    html += '</div>';
+                                    const obs = mem.observations || [];
+                                    if (obs.length === 0) {
+                                        html += '<div style="color:var(--text-dim);font-size:11px">No observations yet</div>';
+                                    }
+                                    for (const o of obs) {
+                                        const color = o.source === 'analyst' ? 'var(--yellow)' : 'var(--text-dim)';
+                                        html += `<div style="font-size:11px;padding:1px 0;color:${color}">${esc(o.source==='analyst'?'[YOU]':'[auto]')} ${esc(o.text)}</div>`;
+                                    }
+                                    if (mem.tags && mem.tags.length) {
+                                        html += `<div style="margin-top:4px;font-size:10px;color:var(--cyan)">Tags: ${esc(mem.tags.join(', '))}</div>`;
+                                    }
+                                    // Add observation input
+                                    html += `<div style="margin-top:6px;display:flex;gap:4px;">
+                                        <input type="text" id="obs-${mac.replace(/:/g,'-')}" onclick="event.stopPropagation()" placeholder="Add observation..." style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--green);padding:3px 6px;font-family:inherit;font-size:11px;">
+                                        <button onclick="event.stopPropagation();addObservation('${esc(mac)}','${esc(h.ip)}')" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:3px 8px;cursor:pointer;font-size:11px;">+</button>
+                                        <select id="status-${mac.replace(/:/g,'-')}" onclick="event.stopPropagation()" onchange="setHostStatus('${esc(mac)}',this.value)" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:3px;font-size:10px;">
+                                            <option value="unknown" ${mem.status==='unknown'?'selected':''}>unknown</option>
+                                            <option value="interesting" ${mem.status==='interesting'?'selected':''}>interesting</option>
+                                            <option value="dead-end" ${mem.status==='dead-end'?'selected':''}>dead-end</option>
+                                            <option value="needs-attention" ${mem.status==='needs-attention'?'selected':''}>needs-attention</option>
+                                            <option value="compromised" ${mem.status==='compromised'?'selected':''}>compromised</option>
+                                        </select>
+                                    </div>`;
+                                    el.innerHTML = html;
+                                }).catch(() => {});
+
+                            // Load scan history
+                            fetch('/api/host/' + encodeURIComponent(h.ip) + '/history')
+                                .then(r => r.json())
+                                .then(history => {
+                                    const el = document.getElementById('history-' + h.ip);
+                                    if (!el) return;
+                                    let html = '<div class="host-history-title">SCAN HISTORY</div>';
+                                    if (history.length === 0) {
+                                        html += '<div style="color:var(--text-dim);font-size:11px">No history</div>';
+                                    }
+                                    for (const entry of history) {
+                                        const ts = (entry.timestamp || '').split('T')[1]?.split('Z')[0] || '';
+                                        html += `<div class="history-entry">
+                                            <span style="color:var(--text-dim)">${esc(ts)}</span>
+                                            <span class="history-cmd"> ${esc(entry.command || '')}</span>
+                                            <span style="color:${entry.status === 'success' ? 'var(--green)' : 'var(--red)'}"> [${esc(entry.status || '')}]</span>
+                                        </div>`;
+                                    }
+                                    el.innerHTML = html;
+                                }).catch(() => {});
+                        }
+                    }
+                }
+
+                // Feature 7: Draw sparklines from feed command timestamps
+                try {
+                    const cmdsByIp = {};
+                    for (const f of feedDataGlobal) {
+                        if (f.type === 'command' && f.content) {
+                            const ipMatch = f.content.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+                            if (ipMatch) {
+                                const ip = ipMatch[1];
+                                if (!cmdsByIp[ip]) cmdsByIp[ip] = [];
+                                cmdsByIp[ip].push(f.ts);
+                            }
+                        }
+                    }
+                    for (const h of allHosts) {
+                        const macSafe = (h.mac || '').replace(/:/g, '-');
+                        const timestamps = cmdsByIp[h.ip] || [];
+                        if (timestamps.length > 0) drawSparkline('spark-' + macSafe, timestamps);
+                    }
+                } catch(e) {}
+
+                // Vulns panel (separate)
+                const vulns = data.vulns || [];
+                const vulnBody = document.getElementById('vuln-body');
+                document.getElementById('vuln-count').textContent = vulns.length;
+                vulnBody.innerHTML = '';
+                if (vulns.length === 0) {
+                    vulnBody.innerHTML = '<div style="color:var(--text-dim)">No vulnerabilities found yet</div>';
+                }
+                for (const v of vulns) {
+                    const vid = v.id || vulns.indexOf(v);
+                    const isExp = expandedVuln === vid;
+                    const card = document.createElement('div');
+                    card.className = 'vuln-card' + (isExp ? ' expanded' : '');
+                    card.onclick = () => { expandedVuln = isExp ? null : vid; pollState(); };
+                    const cveMatches = (v.vuln || '').match(/CVE-\d{4}-\d+/g) || [];
+                    const cveTags = cveMatches.map(c => `<span class="vuln-cve-tag">${esc(c)}</span>`).join('');
+                    const chain = v.chain || 'Not recorded';
+                    const remediation = v.remediation || 'Review finding and consult vendor documentation.';
+                    card.innerHTML = `
+                        <div class="vuln-card-header">
+                            <div>
+                                <span class="vuln-severity ${esc(v.severity)}">[${esc((v.severity||'medium').toUpperCase())}]</span>
+                                ${esc(v.host)} — ${esc((v.vuln||'').substring(0, 80))}${(v.vuln||'').length > 80 ? '...' : ''}
+                            </div>
+                            <div style="color:var(--text-dim);font-size:10px">${esc(v.service || 'unknown')}</div>
+                        </div>
+                        <div class="vuln-detail">
+                            <div class="vuln-detail-section"><div class="vuln-detail-label">Finding</div><div class="vuln-detail-value">${esc(v.vuln || '')}</div></div>
+                            ${cveTags ? `<div class="vuln-detail-section"><div class="vuln-detail-label">CVEs</div><div>${cveTags}</div></div>` : ''}
+                            <div class="vuln-detail-section"><div class="vuln-detail-label">Exploit Chain</div><div class="vuln-detail-value chain">${esc(chain)}</div></div>
+                            <div class="vuln-detail-section"><div class="vuln-detail-label">Remediation</div><div class="vuln-detail-value remediation">${esc(remediation)}</div></div>
+                            <div class="vuln-detail-section"><div class="vuln-detail-label">Discovered</div><div class="vuln-detail-value" style="color:var(--text-dim)">${esc(v.timestamp || 'Unknown')}</div></div>
+                        </div>`;
+                    vulnBody.appendChild(card);
+                }
+
+                // Creds panel (separate)
+                const creds = data.creds || [];
+                const credBody = document.getElementById('cred-body');
+                document.getElementById('cred-count').textContent = creds.length;
+                credBody.innerHTML = '';
+                if (creds.length === 0) {
+                    credBody.innerHTML = '<div style="color:var(--text-dim)">No credentials found — click + ADD to enter known credentials</div>';
+                }
+                for (const c of creds) {
+                    const div = document.createElement('div');
+                    div.className = 'cred-entry';
+                    div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+                    div.innerHTML = `<span><span class="cred-service">[${esc(c.service)}]</span> <span class="cred-user">${esc(c.username)}</span>:<span style="color:var(--text-dim)">****</span>${c.host ? ` @ ${esc(c.host)}` : ' <span style="color:var(--yellow)">(any host)</span>'}</span>` +
+                        `<button onclick="deleteCred(${c.id})" style="background:none;border:1px solid var(--red);color:var(--red);padding:1px 6px;cursor:pointer;font-size:9px;" title="Delete credential">X</button>`;
+                    credBody.appendChild(div);
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        // Poll state every 2s, findings from disk every 5s
+        // Skip online polling when in offline mode to prevent phase flicker
+        setInterval(() => { if (!offlineMode) pollState(); }, 2000);
+        setInterval(() => { if (!offlineMode) pollFindings(); }, 5000);
+        pollState();
+        pollFindings();
+        // Scroll feed to bottom on initial page load
+        setTimeout(() => {
+            const fb = document.getElementById('feed-body');
+            if (fb) fb.scrollTop = fb.scrollHeight;
+        }, 2500);
+
+        // Reverse pagination — load older entries when scrolling to top
+        (function() {
+            const fb = document.getElementById('feed-body');
+            if (!fb) return;
+            let loadingMore = false;
+            fb.addEventListener('scroll', () => {
+                if (fb.scrollTop < 50 && !loadingMore && window._fullFeed) {
+                    const loadMoreEl = document.getElementById('feed-load-more');
+                    if (!loadMoreEl) return;
+                    const currentVisible = fb.querySelectorAll('.feed-entry').length;
+                    const totalAvail = window._fullFeed.length;
+                    if (currentVisible >= totalAvail) return;
+
+                    loadingMore = true;
+                    const prevHeight = fb.scrollHeight;
+                    // Load 100 more older entries
+                    const startIdx = Math.max(0, totalAvail - currentVisible - 100);
+                    const endIdx = totalAvail - currentVisible;
+                    const older = window._fullFeed.slice(startIdx, endIdx);
+
+                    // Insert after the load-more sentinel
+                    const firstEntry = loadMoreEl.nextSibling;
+                    for (const e of older) {
+                        const el = createFeedEntry(e);
+                        fb.insertBefore(el, firstEntry);
+                    }
+
+                    // Update sentinel text
+                    const remaining = startIdx;
+                    if (remaining <= 0) {
+                        loadMoreEl.remove();
+                    } else {
+                        loadMoreEl.textContent = `↑ ${remaining} older entries — scroll up to load`;
+                    }
+
+                    // Maintain scroll position
+                    fb.scrollTop = fb.scrollHeight - prevHeight + fb.scrollTop;
+                    setTimeout(() => { loadingMore = false; }, 500);
+                }
+            });
+        })();
+
+        // === Offline Mode ===
+        let offlineMode = false;
+        let offlineState = {};
+
+        // Pwnagotchi face animation system
+        const FACE_EXPRESSIONS = {
+            idle:     ['( •_•)',  '( •_• )', '( •‿•)'],
+            look_l:   ['(•_ •)',  '(•_• )', '(•‿• )'],
+            look_r:   ['( •_•)', '( •_•)',  '( •‿•)'],
+            blink:    ['( -_-)',  '( ᴗ_ᴗ)'],
+            scan:     ['( ⊙_⊙)', '( ◉_◉)', '( ◎_◎)', '( ⊙‿⊙)'],
+            select:   ['( •ᴗ•)',  '( •‿•)',  '( ◠‿◠)'],
+            capture:  ['( ⊙_⊙)', '( ◉‸◉)', '( ⊙△⊙)', '( ◉_◉)!'],
+            crack:    ['( •̀_•́)', '( •̀‸•́)', '( ⌐■_■)', '( •̀ᴗ•́)'],
+            connect:  ['( •‿•)',  '( ◠‿◠)',  '( ◕‿◕)'],
+            found:    ['( ◕‿◕)♥', '( ♥‿♥)',  '( ◕ᴗ◕)✓'],
+            fail:     ['( •᷄_•᷅)', '( ╥_╥)',   '( ;_;)'],
+            sleep:    ['( ᴗ_ᴗ) zzZ', '( -_-) zZ', '( ᴗ‿ᴗ) Zzz'],
+        };
+        const FACE_THOUGHTS = {
+            0: ['scanning...', 'looking for APs', 'ch hopping', 'hunting', 'sniffing packets', '📡', 'where are you...'],
+            1: ['hmm which one', 'so many choices', 'pick wisely', 'ROE check', 'target acquired?'],
+            2: ['waiting...', 'cmon handshake', 'deauth sent!', 'patience...', 'got clients', 'capturing...'],
+            3: ['cracking!', 'trying keys', 'rockyou go!', `${(310).toLocaleString()}k k/s`, 'almost...', 'brute force!'],
+            4: ['connecting...', 'fingers crossed', 'DHCP plz', 'almost in!'],
+            5: ['we\'re in!', 'online!', 'pentest time'],
+        };
+        let _faceXPos = 0;      // -1 to 1 float
+        let _faceTargetX = 0;
+        let _faceTimer = null;
+        let _faceBubbleTimer = null;
+
+        function startFaceAnimations() {
+            if (_faceTimer) return; // already running
+
+            // Drift side to side
+            _faceTimer = setInterval(() => {
+                if (!offlineMode) return;
+                const inner = document.getElementById('face-inner');
+                if (!inner) return;
+
+                // Random target position
+                if (Math.random() < 0.3) _faceTargetX = (Math.random() - 0.5) * 2;
+                // Ease toward target
+                _faceXPos += (_faceTargetX - _faceXPos) * 0.3;
+                const px = _faceXPos * 80; // max 80px displacement
+
+                // Random micro-expressions
+                const stage = offlineState.stage || 0;
+                let expr;
+                const r = Math.random();
+                if (r < 0.1) {
+                    expr = FACE_EXPRESSIONS.blink[Math.floor(Math.random() * FACE_EXPRESSIONS.blink.length)];
+                } else if (r < 0.2) {
+                    expr = _faceXPos < -0.3 ? FACE_EXPRESSIONS.look_l[0] : _faceXPos > 0.3 ? FACE_EXPRESSIONS.look_r[0] : null;
+                }
+                if (!expr) {
+                    const set = stage === 0 ? FACE_EXPRESSIONS.scan :
+                                stage === 1 ? FACE_EXPRESSIONS.select :
+                                stage === 2 ? FACE_EXPRESSIONS.capture :
+                                stage === 3 ? FACE_EXPRESSIONS.crack :
+                                stage === 4 ? FACE_EXPRESSIONS.connect :
+                                offlineState.password ? FACE_EXPRESSIONS.found :
+                                FACE_EXPRESSIONS.idle;
+                    expr = set[Math.floor(Math.random() * set.length)];
+                }
+                inner.textContent = expr;
+                inner.style.transform = `translateX(${px}px)`;
+
+                // Stage-based CSS animation class
+                const faceEl = document.getElementById('offline-face');
+                faceEl.className = 'offline-face' +
+                    (stage === 0 ? ' face-scanning' : stage === 2 ? ' face-capturing' : stage === 3 ? ' face-cracking' : '');
+
+            }, 1500);
+
+            // Thought bubbles
+            _faceBubbleTimer = setInterval(() => {
+                if (!offlineMode) return;
+                const faceEl = document.getElementById('offline-face');
+                if (!faceEl) return;
+                const stage = offlineState.stage || 0;
+                const thoughts = FACE_THOUGHTS[stage] || FACE_THOUGHTS[0];
+                const thought = thoughts[Math.floor(Math.random() * thoughts.length)];
+
+                const bubble = document.createElement('span');
+                bubble.className = 'face-bubble';
+                bubble.textContent = thought;
+                bubble.style.left = (30 + Math.random() * 40) + '%';
+                bubble.style.top = '0px';
+                faceEl.appendChild(bubble);
+                setTimeout(() => bubble.remove(), 3000);
+            }, 4000);
+        }
+
+        function stopFaceAnimations() {
+            if (_faceTimer) { clearInterval(_faceTimer); _faceTimer = null; }
+            if (_faceBubbleTimer) { clearInterval(_faceBubbleTimer); _faceBubbleTimer = null; }
+        }
+
+        async function checkOfflineMode() {
+            try {
+                const r = await fetch('/api/offline/state');
+                offlineState = await r.json();
+                const wasOffline = offlineMode;
+                offlineMode = offlineState.stage < 5;
+
+                if (offlineMode) {
+                    document.body.classList.add('offline-mode');
+                    document.getElementById('s-phase').textContent = 'WIFI BREACH';
+                    document.getElementById('s-mode').textContent = offlineState.stage_name || 'OFFLINE';
+                    // Override network bar to show "Offline"
+                    const netBtns = document.getElementById('network-buttons');
+                    if (netBtns) netBtns.innerHTML = '';
+                    const netAll = document.getElementById('net-all');
+                    if (netAll) { netAll.textContent = 'OFFLINE'; netAll.style.borderColor = '#ffaa00'; netAll.style.color = '#ffaa00'; }
+                    // Hide online-only stats
+                    document.getElementById('s-thor').textContent = 'N/A';
+                    document.getElementById('s-stats').textContent = '-- / -- / --';
+                    startFaceAnimations();
+                    renderOfflineUI();
+                } else {
+                    document.body.classList.remove('offline-mode');
+                    stopFaceAnimations();
+                    // Restore network bar
+                    const netAll = document.getElementById('net-all');
+                    if (netAll) { netAll.textContent = 'ALL'; netAll.style.borderColor = ''; netAll.style.color = ''; }
+                    if (wasOffline) {
+                        // Transitioning to online — force refresh all online data
+                        showToast('Connected! Transitioning to Online mode...', 'success');
+                        loadNetworks();
+                        pollState();
+                        pollFindings();
+                    }
+                }
+            } catch(e) {
+                // API not reachable = might truly be offline
+            }
+        }
+
+        function renderOfflineUI() {
+            // Check adapter status
+            checkAdapter();
+            // Face is handled by startFaceAnimations() — just ensure inner span exists
+            const faceEl = document.getElementById('offline-face');
+            if (faceEl && !document.getElementById('face-inner')) {
+                faceEl.innerHTML = '<span class="face-inner" id="face-inner">( •_•)</span>';
+            }
+
+            // Update stage indicators — show completed/active/pending
+            const currentStage = offlineState.stage || 0;
+            for (let i = 0; i <= 4; i++) {
+                const el = document.getElementById('off-stage-' + i);
+                if (el) {
+                    el.className = 'stage-pill' +
+                        (i === currentStage ? ' active-stage' :
+                         i < currentStage ? ' completed-stage' : '');
+                }
+            }
+
+            // Only SCAN is manual — everything after target selection is autonomous
+            document.getElementById('offline-scan-btn').disabled = (currentStage > 1);
+
+            // Update handshake monitor
+            renderHandshakeMonitor();
+            // Update cracking status
+            renderCrackStatus();
+            // Update WiFi feed
+            renderWifiFeed();
+            // Update handshakes list
+            renderHandshakesList();
+        }
+
+        async function renderWifiNetworks() {
+            try {
+                const r = await fetch('/api/offline/networks');
+                const nets = await r.json();
+                const body = document.getElementById('wifi-networks-body');
+                document.getElementById('wifi-net-count').textContent = nets.length;
+
+                if (!nets.length) {
+                    body.innerHTML = '<div style="color:var(--text-dim);">No networks found. Click SCAN to begin...</div>';
+                    return;
+                }
+
+                body.innerHTML = nets.map(n => {
+                    const selected = n.bssid === offlineState.target_bssid;
+                    const signalBars = getSignalBars(n.signal);
+                    const ssidDisplay = n.ssid === '(hidden)' ? '<i style="color:var(--text-dim)">(hidden)</i>' : n.ssid;
+                    return `<div class="wifi-network-card ${selected ? 'selected' : ''}"
+                                onclick="selectWifiTarget('${n.bssid}', '${n.ssid.replace(/'/g, "\\'")}')">
+                        <div>
+                            <div class="ssid">${selected ? '&#9733; ' : ''}${ssidDisplay}</div>
+                            <div class="meta">
+                                <span>${n.encryption}</span>
+                                <span>CH${n.channel}</span>
+                                <span>${n.clients} clients</span>
+                                ${n.wps === 'Yes' ? '<span style="color:#ff4444;">WPS</span>' : ''}
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <div class="wifi-signal-bars">${signalBars}</div>
+                            <span style="color:var(--text-dim);font-size:10px;">${n.signal}dBm</span>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch(e) {}
+        }
+
+        function getSignalBars(dbm) {
+            const strength = Math.min(4, Math.max(0, Math.floor((dbm + 90) / 15) + 1));
+            let bars = '';
+            for (let i = 0; i < 4; i++) {
+                const h = 3 + i * 3;
+                bars += `<div class="bar${i < strength ? ' on' : ''}" style="height:${h}px;"></div>`;
+            }
+            return bars;
+        }
+
+        async function selectWifiTarget(bssid, ssid) {
+            if (!confirm(`Select "${ssid}" (${bssid}) as target?\n\nConfirm you have valid Rules of Engagement (ROE) for this network.`)) return;
+            try {
+                const r = await fetch('/api/offline/target', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bssid, confirm_roe: true})
+                });
+                const data = await r.json();
+                if (data.ok) {
+                    showToast(`Target set: ${ssid}`, 'success');
+                    checkOfflineMode();
+                    renderWifiNetworks();
+                } else {
+                    showToast(data.error || 'Failed', 'warning');
+                }
+            } catch(e) { showToast('Error: ' + e, 'warning'); }
+        }
+
+        function renderHandshakeMonitor() {
+            const el = document.getElementById('handshake-monitor');
+            if (!offlineState.target_bssid) {
+                el.innerHTML = '<div style="color:var(--text-dim);">Select a target network above...</div>';
+                return;
+            }
+            const hs = offlineState.handshake_captured;
+            const tool = offlineState.capture_tool || '';
+            const cycle = offlineState.capture_cycle || 0;
+
+            // Tool indicator with color coding
+            let toolHtml = '';
+            if (tool && tool !== 'stopped' && tool !== 'done' && !hs) {
+                const toolColor = '#ff6600';
+                toolHtml = `
+                    <div style="margin-top:8px;padding:6px 10px;border:1px solid ${toolColor};background:${toolColor}11;display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">&#9889;</span>
+                        <div>
+                            <div style="color:${toolColor};font-weight:bold;font-size:12px;">Active: airodump-ng + stealth deauth</div>
+                            <div style="color:var(--text-dim);font-size:10px;">Cycle ${cycle} — 13.5 min per cycle</div>
+                        </div>
+                        <span style="margin-left:auto;color:${toolColor};font-size:18px;" class="capture-pulse">&#9679;</span>
+                    </div>`;
+            }
+
+            el.innerHTML = `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+                    <div><span style="color:var(--text-dim);">Target:</span> <span style="color:#ffaa00;">${offlineState.target_ssid}</span></div>
+                    <div><span style="color:var(--text-dim);">BSSID:</span> ${offlineState.target_bssid}</div>
+                    <div><span style="color:var(--text-dim);">Channel:</span> ${offlineState.target_channel}</div>
+                    <div><span style="color:var(--text-dim);">Encryption:</span> ${offlineState.target_encryption}</div>
+                    <div><span style="color:var(--text-dim);">Deauths:</span> ${offlineState.deauth_count}/${offlineState.deauth_max}</div>
+                    <div><span style="color:var(--text-dim);">Handshake:</span>
+                        ${hs ? '<span style="color:#00ff41;font-weight:bold;">&#10003; CAPTURED</span>'
+                             : '<span style="color:#ff4444;">&#10007; Waiting...</span>'}</div>
+                </div>
+                ${toolHtml}
+                ${hs && offlineState.capture_tool ? `<div style="margin-top:6px;font-size:10px;color:#00ff41;">Captured via: ${offlineState.capture_tool}</div>` : ''}
+                ${offlineState.capture_file ? `<div style="margin-top:4px;font-size:10px;color:var(--text-dim);">File: ${offlineState.capture_file}</div>` : ''}
+            `;
+        }
+
+        function renderCrackStatus() {
+            const el = document.getElementById('crack-status');
+            if (!offlineState.handshake_captured && offlineState.stage < 3) {
+                el.innerHTML = '<div style="color:var(--text-dim);">Capture a handshake first...</div>';
+                return;
+            }
+            const pct = offlineState.crack_progress || 0;
+            const pwd = offlineState.password;
+            el.innerHTML = `
+                ${pwd ? `<div style="text-align:center;padding:8px;">
+                    <div style="color:#00ff41;font-size:16px;font-weight:bold;">KEY FOUND: ${pwd}</div>
+                    <button onclick="offlineConnect()" style="margin-top:8px;padding:8px 24px;background:#003b00;border:2px solid #00ff41;color:#00ff41;font-family:inherit;font-size:14px;font-weight:bold;cursor:pointer;">CONNECT TO ${offlineState.target_ssid || 'NETWORK'}</button>
+                </div>` : ''}
+                <div class="crack-progress-bar">
+                    <div class="crack-progress-fill" style="width:${pct}%"></div>
+                    <div class="crack-progress-text">${pct.toFixed(1)}%</div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:11px;">
+                    <div><span style="color:var(--text-dim);">Speed:</span> ${offlineState.crack_speed || '--'}</div>
+                    <div><span style="color:var(--text-dim);">Tested:</span> ${(offlineState.crack_candidates||0).toLocaleString()} / ${(offlineState.crack_total||0).toLocaleString()}</div>
+                    <div><span style="color:var(--text-dim);">ETA:</span> ${offlineState.crack_eta || '--'}</div>
+                </div>
+                <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">
+                    Wordlist: ${offlineState.crack_wordlist || '--'} | Method: aircrack-ng CPU (~310k k/s)
+                </div>
+            `;
+        }
+
+        function renderWifiFeed() {
+            const feed = offlineState.wifi_feed || [];
+            const body = document.getElementById('wifi-feed-body');
+            document.getElementById('wifi-feed-count').textContent = feed.length;
+            if (!feed.length) {
+                body.innerHTML = '<div style="color:var(--text-dim);">Waiting for WiFi operations...</div>';
+                return;
+            }
+            const typeColors = {
+                scan: '#ffaa00', target: '#00aaff', capture: '#aa44ff',
+                deauth: '#ff6600', crack: '#ff44aa', connect: '#00ff41',
+                error: '#ff4444', system: '#888888'
+            };
+            body.innerHTML = feed.slice(-100).map(e => {
+                const c = typeColors[e.type] || '#ffaa00';
+                return `<div class="feed-entry" style="border-left:2px solid ${c};">
+                    <span class="feed-ts">${e.ts}</span>
+                    <span style="color:${c};font-size:10px;font-weight:bold;margin:0 4px;">[${(e.type||'').toUpperCase()}]</span>
+                    <span class="feed-content">${e.content}</span>
+                </div>`;
+            }).join('');
+            body.scrollTop = body.scrollHeight;
+        }
+
+        async function renderHandshakesList() {
+            try {
+                const r = await fetch('/api/offline/handshakes');
+                const hs = await r.json();
+                const body = document.getElementById('handshakes-body');
+                document.getElementById('handshake-count').textContent = hs.length;
+                if (!hs.length) {
+                    body.innerHTML = '<div style="color:var(--text-dim);">No handshakes captured yet...</div>';
+                    return;
+                }
+                body.innerHTML = hs.map(h => `
+                    <div class="handshake-card" style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid var(--border);">
+                        <div style="flex:1;min-width:0;">
+                            <div>
+                                <span style="color:#ffaa00;font-weight:bold;">${h.ssid}</span>
+                                <span style="color:var(--text-dim);font-size:10px;margin-left:8px;">${h.bssid}</span>
+                            </div>
+                            <div style="margin-top:3px;">
+                                <span style="font-size:11px;padding:1px 6px;border-radius:2px;${h.cracked
+                                    ? 'background:#003b00;color:#00ff41;border:1px solid #00ff41;'
+                                    : 'background:#332200;color:#ffaa00;border:1px solid #ffaa00;'
+                                }">${h.cracked ? 'CRACKED' : 'CAPTURED'}</span>
+                                ${h.cracked && h.password ? `<code style="color:#0f0;background:#111;padding:2px 6px;margin-left:8px;font-size:12px;cursor:pointer;border:1px solid #333;" onclick="navigator.clipboard.writeText('${h.password.replace(/'/g, "\\'")}');this.style.borderColor='#0f0';setTimeout(()=>this.style.borderColor='#333',1000);" title="Click to copy">${h.password}</code>` : ''}
+                                <span style="color:var(--text-dim);font-size:10px;margin-left:8px;">${h.captured_at || ''}</span>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
+                            <a href="/api/offline/handshakes/${h.id}/download"
+                               download style="color:#0af;font-size:11px;text-decoration:none;padding:3px 6px;border:1px solid #0af;border-radius:2px;" title="Download capture file">DL</a>
+                            <button onclick="deleteHandshake(${h.id}, '${h.ssid.replace(/'/g, "\\'")}')"
+                               style="color:var(--red);font-size:11px;background:none;border:1px solid var(--red);border-radius:2px;padding:3px 6px;cursor:pointer;" title="Delete handshake">DEL</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch(e) {}
+        }
+
+        async function deleteHandshake(id, ssid) {
+            if (!confirm(`Delete handshake for ${ssid}? This removes the capture file from disk.`)) return;
+            try {
+                const r = await fetch(`/api/offline/handshakes/${id}`, {method: 'DELETE'});
+                const d = await r.json();
+                if (d.ok) {
+                    renderHandshakesList();
+                } else {
+                    alert(d.error || 'Delete failed');
+                }
+            } catch(e) { alert('Delete failed: ' + e); }
+        }
+
+        async function checkAdapter() {
+            try {
+                // Use adapter info from offlineState if available (avoids extra fetch)
+                const d = offlineState.adapter || (await (await fetch('/api/offline/adapter')).json());
+                const icon = document.getElementById('adapter-icon');
+                const text = document.getElementById('adapter-text');
+                const scanBtn = document.getElementById('offline-scan-btn');
+                if (d && d.detected && d.interface) {
+                    icon.textContent = '\u2705';
+                    const drvInfo = d.driver ? ` (${d.driver})` : '';
+                    text.innerHTML = `<span style="color:#00ff41;"><b>${d.adapter || d.interface}</b> on ${d.interface}${drvInfo} — ready</span>`;
+                    scanBtn.disabled = false;
+                } else if (d && d.detected && !d.driver_loaded) {
+                    icon.textContent = '\u2705';
+                    text.innerHTML = `<span style="color:#ffaa00;"><b>${d.adapter || 'Adapter'}</b> detected — click SCAN to load driver and begin</span>`;
+                    scanBtn.disabled = false;
+                } else if (d && d.detected) {
+                    icon.textContent = '\u2705';
+                    text.innerHTML = `<span style="color:#ffaa00;"><b>${d.adapter || 'Adapter'}</b> detected — click SCAN to begin</span>`;
+                    scanBtn.disabled = false;
+                } else {
+                    icon.textContent = '\u274C';
+                    text.innerHTML = `<span style="color:#ff4444;">No adapter. Plug in Edimax AC600 or N150 USB WiFi adapter.</span>`;
+                    scanBtn.disabled = true;
+                }
+            } catch(e) {}
+        }
+
+        async function offlineScan() {
+            try {
+                const r = await fetch('/api/offline/scan/start', {method:'POST'});
+                const d = await r.json();
+                if (d.ok) showToast('WiFi scan started', 'success');
+                else showToast(d.error || 'Scan failed', 'warning');
+                setTimeout(() => { checkOfflineMode(); renderWifiNetworks(); }, 1000);
+            } catch(e) { showToast('Error: ' + e, 'warning'); }
+        }
+
+        async function offlineStopScan() {
+            await fetch('/api/offline/scan/stop', {method:'POST'});
+            showToast('Scan stopped', 'info');
+            checkOfflineMode();
+        }
+
+        async function offlineCapture() {
+            try {
+                const r = await fetch('/api/offline/capture/start', {method:'POST'});
+                const d = await r.json();
+                if (d.ok) showToast('Handshake capture started', 'success');
+                else showToast(d.error || 'Capture failed', 'warning');
+                checkOfflineMode();
+            } catch(e) { showToast('Error: ' + e, 'warning'); }
+        }
+
+        async function offlineCrack() {
+            try {
+                const r = await fetch('/api/offline/crack/start', {method:'POST'});
+                const d = await r.json();
+                if (d.ok) showToast('Cracking started', 'success');
+                else showToast(d.error || 'Crack failed', 'warning');
+                checkOfflineMode();
+            } catch(e) { showToast('Error: ' + e, 'warning'); }
+        }
+
+        async function offlineConnect() {
+            if (!confirm('Connect to the cracked network? This will exit monitor mode.')) return;
+            try {
+                const r = await fetch('/api/offline/connect', {method:'POST'});
+                const d = await r.json();
+                if (d.ok) {
+                    showToast('Connected! IP: ' + (d.ip || ''), 'success');
+                    checkOfflineMode();
+                } else {
+                    showToast(d.error || 'Connect failed', 'warning');
+                }
+            } catch(e) { showToast('Error: ' + e, 'warning'); }
+        }
+
+        async function toggleOfflineMode() {
+            const currentlyOffline = document.body.classList.contains('offline-mode');
+            const mode = currentlyOffline ? 'online' : 'offline';
+            const msg = currentlyOffline
+                ? 'Exit offline mode and resume pentest agent?'
+                : 'Enter offline WiFi attack mode? This will pause the agent and LLM.';
+            if (!confirm(msg)) return;
+            try {
+                const r = await fetch('/api/offline/force', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mode})
+                });
+                const d = await r.json();
+                if (d.ok || d.stage_name) {
+                    showToast(currentlyOffline ? 'Switched to ONLINE mode' : 'Switched to OFFLINE mode', 'success');
+                    checkOfflineMode();
+                } else {
+                    showToast(d.error || 'Toggle failed', 'warning');
+                }
+            } catch(e) { showToast('Error: ' + e, 'warning'); }
+        }
+
+        // Poll offline state every 2s when in offline mode
+        setInterval(() => {
+            checkOfflineMode();
+            if (offlineMode) renderWifiNetworks();
+        }, 2000);
+
+        // Initial check
+        checkOfflineMode();
+
+        // === Throughput Timeline Chart ===
+        let throughputData = [];
+        let throughputHover = -1;  // index of hovered bar
+
+        function formatHourEDT(hourKey) {
+            // hourKey like "2026-03-22T17" → "5:00 PM EDT"
+            if (!hourKey || hourKey.length < 13) return hourKey;
+            try {
+                const utcH = parseInt(hourKey.substring(11, 13));
+                let edtH = utcH - 4;
+                if (edtH < 0) edtH += 24;
+                const date = hourKey.substring(5, 10); // MM-DD
+                const ampm = edtH >= 12 ? 'PM' : 'AM';
+                const h12 = edtH === 0 ? 12 : edtH > 12 ? edtH - 12 : edtH;
+                return `${date} ${h12}:00 ${ampm} EDT`;
+            } catch(e) { return hourKey; }
+        }
+
+        function drawThroughput() {
+            const canvas = document.getElementById('throughput-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.offsetWidth;
+            const H = canvas.offsetHeight;
+            canvas.width = W; canvas.height = H;
+            ctx.clearRect(0, 0, W, H);
+            if (throughputData.length < 2) return;
+
+            const maxVal = Math.max(...throughputData.map(d => (d.count || 0) + (d.cover || 0)), 1);
+            const barW = Math.max(2, (W / throughputData.length) - 1);
+
+            throughputData.forEach((d, i) => {
+                const cover = d.cover || 0;
+                const offensive = d.count || 0;
+                const total = cover + offensive;
+                const totalH = total > 0 ? (total / maxVal) * (H - 14) : 0;
+                const offH = offensive > 0 ? (offensive / maxVal) * (H - 14) : 0;
+                const coverH = totalH - offH;
+                const x = i * (barW + 1);
+                const isHover = i === throughputHover;
+
+                if (isHover) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(x - 1, 0, barW + 2, H);
+                }
+
+                // Cover traffic (purple) — stacked on top
+                if (coverH > 0) {
+                    ctx.fillStyle = isHover ? '#cc66ff' : '#7722aa';
+                    ctx.fillRect(x, H - totalH - 2, barW, coverH);
+                }
+                // Offensive traffic (green) — at bottom of stack
+                if (offH > 0) {
+                    ctx.fillStyle = isHover ? '#00ff41' : (offensive > 15 ? '#00ff41' : offensive > 5 ? '#33aa33' : '#226622');
+                    ctx.fillRect(x, H - offH - 2, barW, offH);
+                }
+            });
+
+            // Label: show hovered or latest
+            const rateEl = document.getElementById('throughput-rate');
+            if (throughputHover >= 0 && throughputHover < throughputData.length) {
+                const d = throughputData[throughputHover];
+                const cover = d.cover || 0;
+                const parts = [`${d.count} cmd/hr`];
+                if (cover > 0) parts.push(`${cover} cover/hr`);
+                parts.push(formatHourEDT(d.hour));
+                rateEl.innerHTML = parts.join(' <span style="color:#555">|</span> ');
+            } else {
+                const latest = throughputData[throughputData.length - 1];
+                const cover = latest.cover || 0;
+                rateEl.innerHTML = latest.count + ' cmd/hr' + (cover > 0 ? ` <span style="color:#aa44ff">| ${cover} cover/hr</span>` : '');
+            }
+        }
+
+        // Mouse hover on throughput chart
+        (function() {
+            const canvas = document.getElementById('throughput-canvas');
+            if (!canvas) return;
+
+            function getBarIndex(clientX) {
+                const rect = canvas.getBoundingClientRect();
+                const x = clientX - rect.left;
+                const barW = Math.max(2, (canvas.offsetWidth / Math.max(throughputData.length, 1)) - 1);
+                return Math.floor(x / (barW + 1));
+            }
+
+            canvas.addEventListener('mousemove', (e) => {
+                const idx = getBarIndex(e.clientX);
+                if (idx !== throughputHover && idx >= 0 && idx < throughputData.length) {
+                    throughputHover = idx;
+                    drawThroughput();
+                }
+            });
+
+            canvas.addEventListener('mouseleave', () => {
+                throughputHover = -1;
+                drawThroughput();
+            });
+
+            // Touch support for mobile
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (e.touches.length === 1) {
+                    const idx = getBarIndex(e.touches[0].clientX);
+                    if (idx >= 0 && idx < throughputData.length) {
+                        throughputHover = idx;
+                        drawThroughput();
+                    }
+                }
+            }, {passive: false});
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (e.touches.length === 1) {
+                    const idx = getBarIndex(e.touches[0].clientX);
+                    if (idx >= 0 && idx < throughputData.length && idx !== throughputHover) {
+                        throughputHover = idx;
+                        drawThroughput();
+                    }
+                }
+            }, {passive: false});
+
+            canvas.addEventListener('touchend', () => {
+                // Keep the selection visible for 2s on mobile, then clear
+                setTimeout(() => { throughputHover = -1; drawThroughput(); }, 2000);
+            });
+        })();
+
+        async function pollThroughput() {
+            try {
+                const resp = await fetch('/api/throughput');
+                const data = await resp.json();
+                throughputData = data.buckets || [];
+                drawThroughput();
+            } catch(e) {}
+        }
+        setInterval(pollThroughput, 10000);
+        pollThroughput();
+
+        // === Cover Traffic Controls ===
+        function updateCoverLabel() {
+            const val = document.getElementById('cover-slider').value;
+            document.getElementById('cover-label').textContent = val == 0 ? 'OFF' : val + '%';
+        }
+
+        async function setCoverTraffic() {
+            const val = parseInt(document.getElementById('cover-slider').value);
+            try {
+                await fetch('/api/cover-traffic', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ratio: val, enabled: val > 0})
+                });
+            } catch(e) {}
+        }
+
+        async function pollCoverTraffic() {
+            try {
+                const resp = await fetch('/api/cover-traffic');
+                const data = await resp.json();
+                const slider = document.getElementById('cover-slider');
+                const label = document.getElementById('cover-label');
+                const status = document.getElementById('cover-status');
+                const count = document.getElementById('cover-count');
+                const body = document.getElementById('cover-body');
+
+                // Update slider if not being dragged
+                if (document.activeElement !== slider) {
+                    slider.value = data.ratio || 0;
+                    label.textContent = data.ratio == 0 ? 'OFF' : data.ratio + '%';
+                }
+
+                const total = data.stats?.total || 0;
+                count.textContent = total;
+                status.textContent = data.running ? `ACTIVE (${data.ratio}% blend)` : 'OFF';
+                status.style.color = data.running ? '#aa44ff' : 'var(--text-dim)';
+
+                // Fetch recent log
+                const logResp = await fetch('/api/cover-traffic/log');
+                const log = await logResp.json();
+                if (log.length === 0) {
+                    if (!data.enabled) {
+                        body.innerHTML = '<div style="color:var(--text-dim)">Cover traffic disabled — use the COVER slider to enable stealth blending</div>';
+                    }
+                    return;
+                }
+                body.innerHTML = '';
+                for (const e of log.slice(-30).reverse()) {
+                    const div = document.createElement('div');
+                    div.style.cssText = 'padding:2px 0;font-size:10px;border-bottom:1px solid #0a0a0a;color:var(--text-dim);';
+                    const ts = (e.timestamp || '').split('T')[1]?.split('.')[0] || '';
+                    const urlShort = (e.url || '').replace('https://', '').replace('http://', '').substring(0, 60);
+                    const statusColor = e.status >= 200 && e.status < 400 ? '#226622' : '#662222';
+                    div.innerHTML = `<span style="color:#555">${ts}</span> <span style="color:#aa44ff">${esc(urlShort)}</span> <span style="color:${statusColor}">[${e.status}]</span> <span style="color:#333">${e.bytes}B</span>`;
+                    body.appendChild(div);
+                }
+            } catch(e) {}
+        }
+        setInterval(pollCoverTraffic, 15000);
+        pollCoverTraffic();
+
+        // === Passive Capture ===
+        let expandedPassive = null;
+
+        async function startPassiveCapture() {
+            try {
+                await fetch('/api/passive/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({duration: 120})});
+                document.getElementById('passive-body').innerHTML = '<div style="color:var(--yellow)">Capturing broadcast traffic (2 min)...</div>';
+            } catch(e) {}
+        }
+
+        function classifyNetwork(ip) {
+            if (!ip) return null;
+            if (ip === '0.0.0.0' || ip === '255.255.255.255' || ip.startsWith('224.') || ip.startsWith('239.')) return null;
+            // Check if IP is in the selected network's CIDR range
+            if (selectedNetworkCidr && ipInCidr(ip, selectedNetworkCidr))
+                return {subnet: selectedNetworkCidr, type: 'target', alert: false};
+            // Private IPs not in target = foreign
+            const isPrivate = ip.startsWith('10.') || ip.match(/^172\.(1[6-9]|2\d|3[01])\./) || ip.startsWith('192.168.');
+            if (isPrivate) return {subnet: ip.split('.').slice(0,3).join('.')+'.0/24', type: 'other-LAN', alert: true};
+            return {subnet: ip, type: 'unknown', alert: true};
+        }
+        function ipInCidr(ip, cidr) {
+            // Parse CIDR and check if IP falls within the subnet
+            try {
+                const [netAddr, bits] = cidr.split('/');
+                const mask = bits ? (~0 << (32 - parseInt(bits))) >>> 0 : 0xFFFFFF00;
+                const ipToInt = s => s.split('.').reduce((a, o) => (a << 8) + parseInt(o), 0) >>> 0;
+                return (ipToInt(ip) & mask) === (ipToInt(netAddr) & mask);
+            } catch(e) { return false; }
+        }
+
+        async function pollPassive() {
+            try {
+                const passiveNetParam = selectedNetwork ? '?network=' + encodeURIComponent(selectedNetwork) : '';
+                const resp = await fetch('/api/passive/results' + passiveNetParam);
+                const data = await resp.json();
+                const body = document.getElementById('passive-body');
+                const count = document.getElementById('passive-count');
+                const netAlert = document.getElementById('passive-networks');
+                if (!data || data.length === 0) return;
+
+                // Dedup by ip+type
+                const seen = new Map();
+                const foreignNets = new Set();
+                for (const f of data) {
+                    const key = (f.ip||'') + ':' + f.type;
+                    if (!seen.has(key)) seen.set(key, f);
+                    const net = classifyNetwork(f.ip);
+                    if (net && net.alert) foreignNets.add(net.subnet);
+                }
+
+                count.textContent = seen.size;
+                if (foreignNets.size > 0) {
+                    netAlert.innerHTML = [...foreignNets].map(n => '<span class="passive-network-alert">FOREIGN NET: ' + esc(n) + '</span>').join(' ');
+                } else {
+                    netAlert.textContent = '';
+                }
+
+                body.innerHTML = '';
+                for (const [key, f] of seen) {
+                    const isExp = expandedPassive === key;
+                    const card = document.createElement('div');
+                    card.className = 'passive-card' + (isExp ? ' expanded' : '');
+                    card.onclick = () => { expandedPassive = isExp ? null : key; pollPassive(); };
+
+                    const net = classifyNetwork(f.ip);
+                    const isForeign = net && net.alert;
+                    const typeClass = 'passive-type-' + (f.type || 'arp');
+                    const foreignTag = isForeign ? ' <span class="passive-network-alert">' + esc(net.subnet) + '</span>' : '';
+
+                    // Build detail section
+                    let detailHtml = '';
+                    detailHtml += '<div style="margin-bottom:4px;"><span style="color:var(--text-dim)">IP:</span> ' + esc(f.ip || '?') + '</div>';
+                    if (f.mac) detailHtml += '<div style="margin-bottom:4px;"><span style="color:var(--text-dim)">MAC:</span> ' + esc(f.mac) + '</div>';
+                    if (f.hostname) detailHtml += '<div style="margin-bottom:4px;"><span style="color:var(--text-dim)">Hostname:</span> <span style="color:var(--yellow)">' + esc(f.hostname) + '</span></div>';
+                    if (f.resolved) detailHtml += '<div style="margin-bottom:4px;"><span style="color:var(--text-dim)">Resolved:</span> ' + esc(f.resolved) + '</div>';
+                    detailHtml += '<div style="margin-bottom:4px;"><span style="color:var(--text-dim)">Protocol:</span> ' + esc(f.type || '?') + '</div>';
+                    detailHtml += '<div style="margin-bottom:4px;"><span style="color:var(--text-dim)">Network:</span> ' + esc(net ? net.subnet : '?') + ' (' + esc(net ? net.type : '?') + ')</div>';
+
+                    if (isForeign) {
+                        detailHtml += '<div style="margin-top:6px;padding:6px;background:#1a0a0a;border:1px solid var(--red);border-radius:3px;">';
+                        detailHtml += '<div style="color:var(--red);font-weight:bold;font-size:10px;">FOREIGN NETWORK DETECTED</div>';
+                        detailHtml += '<div style="color:var(--yellow);font-size:10px;margin-top:4px;">';
+                        detailHtml += 'This host is on a different subnet (' + esc(net.subnet) + '). ';
+                        detailHtml += 'Possible pivot point — a dual-homed device bridging networks. ';
+                        detailHtml += 'Investigate: is this host also on the target network? Can we route to ' + esc(net.subnet) + '?';
+                        detailHtml += '</div></div>';
+                    }
+
+                    card.innerHTML = `
+                        <div class="passive-card-header">
+                            <div>
+                                <span class="${typeClass}">[${esc(f.type || '?')}]</span>
+                                ${esc(f.ip || '?')}
+                                ${f.hostname ? '<span style="color:var(--yellow)"> ' + esc(f.hostname) + '</span>' : ''}
+                                ${foreignTag}
+                            </div>
+                            <div>
+                                ${f.mac ? '<span style="color:var(--text-dim)">' + esc(f.mac) + '</span>' : ''}
+                            </div>
+                        </div>
+                        <div class="passive-detail">${detailHtml}</div>`;
+                    body.appendChild(card);
+                }
+            } catch(e) {}
+        }
+        setInterval(pollPassive, 15000);
+        pollPassive();
+
+        // === Interactive Network Map (drag, zoom, pan, force-directed) ===
+        let mapVisible = false;
+        let mapNodes = [];      // {ip, mac, ports, x, y, vx, vy, fx, fy, pinned}
+        let mapVulns = {};
+        let mapZoom = 1;
+        let mapPanX = 0, mapPanY = 0;
+        let mapDragNode = null;
+        let mapPanning = false;
+        let mapLastMouse = {x:0, y:0};
+        let mapInitialized = false;
+        let mapAnimFrame = null;
+
+        function toggleMapView() {
+            mapVisible = !mapVisible;
+            const btn = document.getElementById('map-toggle-btn');
+            const listBody = document.getElementById('hosts-body');
+            const mapContainer = document.getElementById('map-container');
+            if (mapVisible) {
+                btn.classList.add('active');
+                btn.textContent = 'LIST VIEW';
+                listBody.style.display = 'none';
+                mapContainer.style.display = 'block';
+                if (!mapInitialized) initMapPositions();
+                startMapAnimation();
+            } else {
+                btn.classList.remove('active');
+                btn.textContent = 'MAP VIEW';
+                listBody.style.display = '';
+                mapContainer.style.display = 'none';
+                if (mapAnimFrame) { cancelAnimationFrame(mapAnimFrame); mapAnimFrame = null; }
+            }
+        }
+
+        function getHostIcon(ports) {
+            if (!ports || ports.length === 0) return {icon: '?', type: 'Unknown', color: '#555'};
+            const p = new Set(ports);
+            if ((p.has(80)||p.has(443)||p.has(8080)) && (p.has(445)||p.has(139))) return {icon: 'SRV', type: 'Server', color: '#00ff41'};
+            if ((p.has(80)||p.has(443)||p.has(8080)) && p.has(53)) return {icon: 'DNS', type: 'DNS+Web', color: '#00ddff'};
+            if (p.has(80)||p.has(443)||p.has(8080)) return {icon: 'WEB', type: 'Web', color: '#00aaff'};
+            if (p.has(445)||p.has(139)) return {icon: 'SMB', type: 'File Server', color: '#ffaa00'};
+            if (p.has(53)) return {icon: 'DNS', type: 'DNS', color: '#00ddff'};
+            if (p.has(23)) return {icon: 'TEL', type: 'Telnet', color: '#ff4444'};
+            if (p.has(5900)) return {icon: 'VNC', type: 'VNC', color: '#aa44ff'};
+            if (p.has(3306)||p.has(5432)) return {icon: 'DB', type: 'Database', color: '#ffcc00'};
+            if (p.has(22)) return {icon: 'SSH', type: 'SSH Host', color: '#33ff33'};
+            return {icon: 'H', type: 'Host', color: '#33aa33'};
+        }
+
+        function initMapPositions() {
+            const canvas = document.getElementById('network-map');
+            if (!canvas || !mapNodes.length) return;
+            const W = canvas.offsetWidth, H = canvas.offsetHeight;
+            const cx = W/2, cy = H/2;
+            // Compact layout — scale radius to fit all nodes within 80% of canvas
+            const maxR = Math.min(W, H) * 0.35;
+            const withPorts = mapNodes.filter(n => (n.ports?.length||0) > 0 && !n.ip.endsWith('.1'));
+            const noPorts = mapNodes.filter(n => (n.ports?.length||0) === 0 && !n.ip.endsWith('.1'));
+
+            mapNodes.forEach((n, i) => {
+                if (n.pinned) return;
+                if (n.ip.endsWith('.1')) {
+                    n.x = cx; n.y = cy;
+                } else {
+                    const hasPorts = (n.ports?.length || 0) > 0;
+                    const ring = hasPorts ? withPorts : noPorts;
+                    const idx = ring.indexOf(n);
+                    const angle = (idx / Math.max(ring.length, 1)) * Math.PI * 2 - Math.PI/2;
+                    const r = hasPorts ? maxR * 0.4 : maxR * 0.7;
+                    n.x = cx + Math.cos(angle) * r + (Math.random()-0.5)*20;
+                    n.y = cy + Math.sin(angle) * r + (Math.random()-0.5)*20;
+                }
+                n.vx = 0; n.vy = 0;
+            });
+            mapPanX = 0; mapPanY = 0; mapZoom = 1;
+            mapInitialized = true;
+        }
+
+        function forceSimStep() {
+            const canvas = document.getElementById('network-map');
+            if (!canvas) return;
+            const cx = canvas.offsetWidth/2, cy = canvas.offsetHeight/2;
+            const maxR = Math.min(canvas.offsetWidth, canvas.offsetHeight) * 0.4;
+
+            for (let i = 0; i < mapNodes.length; i++) {
+                if (mapNodes[i].pinned || mapDragNode === mapNodes[i]) continue;
+                let fx = 0, fy = 0;
+                // Repulsion — weaker, just enough to avoid overlap
+                for (let j = 0; j < mapNodes.length; j++) {
+                    if (i === j) continue;
+                    const dx = mapNodes[i].x - mapNodes[j].x;
+                    const dy = mapNodes[i].y - mapNodes[j].y;
+                    const d2 = dx*dx + dy*dy + 1;
+                    const f = 200 / d2;  // reduced from 800
+                    fx += dx * f; fy += dy * f;
+                }
+                // Strong center attraction — keeps nodes compact
+                fx += (cx - mapNodes[i].x) * 0.008;
+                fy += (cy - mapNodes[i].y) * 0.008;
+                // Gateway attraction
+                const gw = mapNodes.find(n => n.ip.endsWith('.1'));
+                if (gw && mapNodes[i] !== gw) {
+                    fx += (gw.x - mapNodes[i].x) * 0.001;
+                    fy += (gw.y - mapNodes[i].y) * 0.001;
+                }
+                // Boundary containment — soft push back if too far from center
+                const dist = Math.sqrt((mapNodes[i].x-cx)**2 + (mapNodes[i].y-cy)**2);
+                if (dist > maxR) {
+                    fx += (cx - mapNodes[i].x) * 0.05;
+                    fy += (cy - mapNodes[i].y) * 0.05;
+                }
+                mapNodes[i].vx = (mapNodes[i].vx + fx) * 0.8;
+                mapNodes[i].vy = (mapNodes[i].vy + fy) * 0.8;
+                mapNodes[i].x += mapNodes[i].vx;
+                mapNodes[i].y += mapNodes[i].vy;
+            }
+        }
+
+        function renderMap() {
+            const canvas = document.getElementById('network-map');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.offsetWidth, H = canvas.offsetHeight;
+            canvas.width = W; canvas.height = H;
+            ctx.clearRect(0, 0, W, H);
+
+            ctx.save();
+            ctx.translate(W/2 + mapPanX, H/2 + mapPanY);
+            ctx.scale(mapZoom, mapZoom);
+            ctx.translate(-W/2, -H/2);
+
+            // Draw connections to gateway
+            const gw = mapNodes.find(n => n.ip.endsWith('.1'));
+            if (gw) {
+                mapNodes.forEach(n => {
+                    if (n === gw) return;
+                    ctx.beginPath();
+                    ctx.moveTo(gw.x, gw.y);
+                    ctx.lineTo(n.x, n.y);
+                    ctx.strokeStyle = (n.ports?.length > 0) ? '#1a3a1a' : '#0f1a0f';
+                    ctx.lineWidth = 0.5 / mapZoom;
+                    ctx.stroke();
+                });
+            }
+
+            // Draw nodes
+            mapNodes.forEach(n => {
+                const ports = n.ports || [];
+                const info = getHostIcon(ports);
+                const hasVulns = mapVulns[n.ip] || 0;
+                const r = ports.length > 3 ? 20 : ports.length > 0 ? 16 : 10;
+                const isHover = n === mapDragNode;
+
+                // Vuln glow
+                if (hasVulns) {
+                    ctx.beginPath();
+                    ctx.arc(n.x, n.y, r + 8, 0, Math.PI*2);
+                    ctx.fillStyle = 'rgba(255,50,50,0.2)';
+                    ctx.fill();
+                }
+
+                // Node bg
+                ctx.beginPath();
+                ctx.arc(n.x, n.y, r, 0, Math.PI*2);
+                ctx.fillStyle = isHover ? '#1a1a1a' : '#0a0a0a';
+                ctx.fill();
+                ctx.strokeStyle = isHover ? '#fff' : info.color;
+                ctx.lineWidth = (hasVulns ? 2.5 : 1.5) / mapZoom;
+                ctx.stroke();
+
+                // Icon text
+                ctx.font = `bold ${Math.round(r*0.7)}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = info.color;
+                ctx.fillText(info.icon, n.x, n.y);
+
+                // IP label
+                const octet = n.ip.split('.')[3];
+                ctx.font = `${Math.round(10/mapZoom*mapZoom)}px monospace`;
+                ctx.fillStyle = info.color;
+                ctx.fillText('.' + octet, n.x, n.y + r + 12);
+
+                // Port count
+                if (ports.length > 0) {
+                    ctx.font = `${Math.round(8/mapZoom*mapZoom)}px monospace`;
+                    ctx.fillStyle = '#666';
+                    ctx.fillText(ports.length + 'p', n.x, n.y + r + 22);
+                }
+
+                // Vuln badge
+                if (hasVulns) {
+                    ctx.font = `bold ${Math.round(9/mapZoom*mapZoom)}px monospace`;
+                    ctx.fillStyle = '#ff3333';
+                    ctx.fillText(hasVulns + ' vuln', n.x, n.y - r - 8);
+                }
+            });
+
+            ctx.restore();
+
+            // Zoom indicator
+            ctx.font = '10px monospace';
+            ctx.fillStyle = '#444';
+            ctx.textAlign = 'left';
+            const isMobile = W < 500;
+            const hint = isMobile
+                ? `${(mapZoom*100).toFixed(0)}%  |  Tap=details  Drag=move  Pinch=zoom  2x tap=reset`
+                : `${(mapZoom*100).toFixed(0)}%  |  Click=details  Drag=move  Scroll=zoom  Shift+drag=pan  Dblclick=reset`;
+            ctx.fillText(hint, 8, H-8);
+        }
+
+        function startMapAnimation() {
+            function tick() {
+                forceSimStep();
+                renderMap();
+                mapAnimFrame = requestAnimationFrame(tick);
+            }
+            if (mapAnimFrame) cancelAnimationFrame(mapAnimFrame);
+            tick();
+            // Stop physics after 3s to save CPU
+            setTimeout(() => {
+                if (mapAnimFrame) { cancelAnimationFrame(mapAnimFrame); renderMap(); }
+            }, 3000);
+        }
+
+        // Mouse interaction
+        (function() {
+            const canvas = document.getElementById('network-map');
+            if (!canvas) return;
+
+            function screenToWorld(sx, sy) {
+                const W = canvas.offsetWidth, H = canvas.offsetHeight;
+                return {
+                    x: (sx - W/2 - mapPanX) / mapZoom + W/2,
+                    y: (sy - H/2 - mapPanY) / mapZoom + H/2,
+                };
+            }
+
+            function findNode(wx, wy) {
+                for (const n of mapNodes) {
+                    const r = (n.ports?.length > 3) ? 24 : (n.ports?.length > 0) ? 20 : 14;
+                    const dx = wx - n.x, dy = wy - n.y;
+                    if (dx*dx + dy*dy < (r+8)*(r+8)) return n;
+                }
+                return null;
+            }
+
+            canvas.addEventListener('mousedown', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+                const w = screenToWorld(sx, sy);
+                mapLastMouse = {x: e.clientX, y: e.clientY};
+
+                if (e.shiftKey) {
+                    mapPanning = true;
+                    canvas.style.cursor = 'grabbing';
+                    return;
+                }
+
+                const node = findNode(w.x, w.y);
+                if (node) {
+                    mapDragNode = node;
+                    canvas.style.cursor = 'grabbing';
+                    startMapAnimation();
+                } else {
+                    mapPanning = true;
+                    canvas.style.cursor = 'grabbing';
+                }
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                const dx = e.clientX - mapLastMouse.x;
+                const dy = e.clientY - mapLastMouse.y;
+                mapLastMouse = {x: e.clientX, y: e.clientY};
+
+                if (mapDragNode) {
+                    mapDragNode.x += dx / mapZoom;
+                    mapDragNode.y += dy / mapZoom;
+                    mapDragNode.pinned = true;
+                    renderMap();
+                } else if (mapPanning) {
+                    mapPanX += dx;
+                    mapPanY += dy;
+                    renderMap();
+                } else {
+                    // Hover detection
+                    const rect = canvas.getBoundingClientRect();
+                    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+                    const w = screenToWorld(sx, sy);
+                    canvas.style.cursor = findNode(w.x, w.y) ? 'pointer' : 'default';
+                }
+            });
+
+            canvas.addEventListener('mouseup', (e) => {
+                if (mapDragNode) {
+                    // If barely moved, treat as click → show modal
+                    mapDragNode = null;
+                }
+                mapPanning = false;
+                canvas.style.cursor = 'default';
+            });
+
+            canvas.addEventListener('click', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+                const w = screenToWorld(sx, sy);
+                const node = findNode(w.x, w.y);
+                if (node && !mapPanning) showHostModal(node);
+            });
+
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const factor = e.deltaY > 0 ? 0.9 : 1.1;
+                mapZoom = Math.max(0.3, Math.min(3, mapZoom * factor));
+                renderMap();
+            }, {passive: false});
+
+            // Double-click/tap to reset view
+            canvas.addEventListener('dblclick', () => {
+                mapZoom = 1; mapPanX = 0; mapPanY = 0;
+                mapNodes.forEach(n => n.pinned = false);
+                initMapPositions();
+                startMapAnimation();
+            });
+
+            // Touch events for mobile
+            let touchStartDist = 0;
+            let touchStartZoom = 1;
+            let lastTouchPos = null;
+            let touchDragNode = null;
+            let touchMoved = false;
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (e.touches.length === 2) {
+                    // Pinch zoom start
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    touchStartDist = Math.sqrt(dx*dx + dy*dy);
+                    touchStartZoom = mapZoom;
+                } else if (e.touches.length === 1) {
+                    const rect = canvas.getBoundingClientRect();
+                    const sx = e.touches[0].clientX - rect.left;
+                    const sy = e.touches[0].clientY - rect.top;
+                    const w = screenToWorld(sx, sy);
+                    lastTouchPos = {x: e.touches[0].clientX, y: e.touches[0].clientY};
+                    touchDragNode = findNode(w.x, w.y);
+                    touchMoved = false;
+                    if (touchDragNode) startMapAnimation();
+                }
+            }, {passive: false});
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                touchMoved = true;
+                if (e.touches.length === 2 && touchStartDist > 0) {
+                    // Pinch zoom
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    mapZoom = Math.max(0.3, Math.min(3, touchStartZoom * (dist / touchStartDist)));
+                    renderMap();
+                } else if (e.touches.length === 1 && lastTouchPos) {
+                    const dx = e.touches[0].clientX - lastTouchPos.x;
+                    const dy = e.touches[0].clientY - lastTouchPos.y;
+                    lastTouchPos = {x: e.touches[0].clientX, y: e.touches[0].clientY};
+                    if (touchDragNode) {
+                        touchDragNode.x += dx / mapZoom;
+                        touchDragNode.y += dy / mapZoom;
+                        touchDragNode.pinned = true;
+                        renderMap();
+                    } else {
+                        mapPanX += dx;
+                        mapPanY += dy;
+                        renderMap();
+                    }
+                }
+            }, {passive: false});
+
+            canvas.addEventListener('touchend', (e) => {
+                if (!touchMoved && touchDragNode) {
+                    showHostModal(touchDragNode);
+                } else if (!touchMoved && lastTouchPos) {
+                    // Tap on empty space — try to find nearest node
+                    const rect = canvas.getBoundingClientRect();
+                    const sx = lastTouchPos.x - rect.left;
+                    const sy = lastTouchPos.y - rect.top;
+                    const w = screenToWorld(sx, sy);
+                    const node = findNode(w.x, w.y);
+                    if (node) showHostModal(node);
+                }
+                touchDragNode = null;
+                lastTouchPos = null;
+                touchStartDist = 0;
+            });
+        })();
+
+        async function showHostModal(host) {
+            const modal = document.getElementById('host-modal');
+            const content = document.getElementById('host-modal-content');
+            const ports = host.ports || [];
+            const info = getHostIcon(ports);
+            const portMap = {22:'SSH',23:'Telnet',25:'SMTP',53:'DNS',80:'HTTP',139:'NetBIOS',443:'HTTPS',445:'SMB',3306:'MySQL',5432:'PostgreSQL',5900:'VNC',6379:'Redis',8080:'HTTP-Alt',8888:'HTTP-Alt'};
+            const portHtml = ports.map(p => `<span class="modal-port" style="border-color:${info.color}">${p}/${portMap[p]||'tcp'}</span>`).join('') || '<span style="color:var(--text-dim)">No open ports</span>';
+
+            let vulnHtml = '';
+            try {
+                const netParam = selectedNetwork ? '?network=' + encodeURIComponent(selectedNetwork) : '';
+                const stateResp = await fetch('/api/state' + netParam);
+                const stateData = await stateResp.json();
+                const hostVulns = (stateData.vulns || []).filter(v => v.host === host.ip);
+                vulnHtml = hostVulns.map(v =>
+                    `<div class="modal-vuln"><span class="vuln-severity ${v.severity}">[${(v.severity||'').toUpperCase()}]</span> ${esc((v.vuln||'').substring(0,120))}<br><span style="color:var(--text-dim);font-size:10px">${esc((v.remediation||'').substring(0,120))}...</span></div>`
+                ).join('');
+            } catch(e) {}
+
+            let memoryHtml = '';
+            try {
+                const memResp = await fetch('/api/hosts/' + encodeURIComponent(host.mac) + '/memory');
+                const memData = await memResp.json();
+                memoryHtml = (memData.observations || []).slice(-10).map(o => {
+                    const text = typeof o === 'string' ? o : o.text || '';
+                    return `<div style="font-size:10px;color:var(--text-dim);padding:2px 0;border-bottom:1px solid #111;">${esc(text)}</div>`;
+                }).join('');
+            } catch(e) {}
+
+            content.innerHTML = `
+                <div style="font-size:20px;margin-bottom:10px;"><span style="color:${info.color};font-weight:bold">[${info.icon}]</span> <span style="color:var(--green)">${esc(host.ip)}</span> <span style="color:var(--text-dim);font-size:12px">${esc(info.type)}</span></div>
+                <div class="modal-section"><div class="modal-label">MAC Address</div><div class="modal-value" style="color:var(--text-dim)">${esc(host.mac || 'Unknown')}</div></div>
+                <div class="modal-section"><div class="modal-label">Open Ports (${ports.length})</div><div>${portHtml}</div></div>
+                ${vulnHtml ? `<div class="modal-section"><div class="modal-label">Vulnerabilities</div>${vulnHtml}</div>` : ''}
+                ${memoryHtml ? `<div class="modal-section"><div class="modal-label">Observations</div>${memoryHtml}</div>` : ''}
+            `;
+            modal.style.display = 'block';
+        }
+
+        function closeHostModal() { document.getElementById('host-modal').style.display = 'none'; }
+
+        // Credential management
+        function openAddCred() { document.getElementById('cred-form').style.display = 'block'; }
+
+        async function saveCred() {
+            const service = document.getElementById('cred-service').value;
+            const username = document.getElementById('cred-user').value.trim();
+            const password = document.getElementById('cred-pass').value.trim();
+            const host = document.getElementById('cred-host').value.trim();
+            if (!username || !password) { alert('Username and password required'); return; }
+            try {
+                const resp = await fetch('/api/credentials', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({service, username, password, host})
+                });
+                const data = await resp.json();
+                if (data.ok) {
+                    document.getElementById('cred-form').style.display = 'none';
+                    document.getElementById('cred-user').value = '';
+                    document.getElementById('cred-pass').value = '';
+                    document.getElementById('cred-host').value = '';
+                    pollState();
+                } else { alert('Error: ' + (data.error || 'Unknown')); }
+            } catch(e) { alert('Save failed: ' + e.message); }
+        }
+
+        async function deleteCred(credId) {
+            if (!confirm('Delete this credential?')) return;
+            try {
+                const resp = await fetch('/api/credentials/' + credId, {method: 'DELETE'});
+                const data = await resp.json();
+                if (data.ok) { pollState(); }
+                else { alert('Error: ' + (data.error || 'Unknown')); }
+            } catch(e) { alert('Delete failed: ' + e.message); }
+        }
+
+        function updateMapData(hosts, vulns) {
+            const oldPositions = {};
+            mapNodes.forEach(n => { oldPositions[n.ip] = {x:n.x, y:n.y, pinned:n.pinned}; });
+
+            mapVulns = {};
+            for (const v of (vulns || [])) mapVulns[v.host] = (mapVulns[v.host] || 0) + 1;
+
+            // Inject gateway + self into the host list if not present
+            const hostIPs = new Set((hosts||[]).map(h => h.ip));
+            const allHosts = [...(hosts||[])];
+            // Detect gateway and self from the first host's subnet
+            if (allHosts.length > 0) {
+                const prefix = allHosts[0].ip.split('.').slice(0,3).join('.') + '.';
+                const gwIP = prefix + '1';
+                if (!hostIPs.has(gwIP)) {
+                    allHosts.unshift({ip: gwIP, mac: 'gateway', ports: [80,443], network: allHosts[0].network, _role: 'gateway'});
+                }
+            }
+            // Add self IP
+            try {
+                // Get self IP from the state's config or detect from hosts prefix
+                if (allHosts.length > 0) {
+                    const prefix = allHosts[0].ip.split('.').slice(0,3).join('.');
+                    // Self IP detection from fetch — just add a placeholder
+                    // Will be populated by state API if available
+                }
+            } catch(e) {}
+
+            // Preserve positions for existing nodes, add new ones
+            mapNodes = allHosts.map(h => {
+                const old = oldPositions[h.ip];
+                return {...h, x: old?.x || 0, y: old?.y || 0, vx:0, vy:0, pinned: old?.pinned || false};
+            });
+
+            if (!mapInitialized && mapNodes.length > 0) initMapPositions();
+            if (mapVisible) renderMap();
+        }
+
+        // Feature 6: Mobile tab navigation
+        let activeTab = 'all';
+        function switchTab(tab) {
+            activeTab = tab;
+            document.querySelectorAll('.tab-btn').forEach(b => {
+                b.classList.toggle('active', b.textContent.trim().toLowerCase() === tab ||
+                    (tab === 'all' && b.textContent.trim() === 'ALL'));
+            });
+            document.querySelectorAll('#online-panels > .panel[data-tab]').forEach(p => {
+                if (tab === 'all') {
+                    p.classList.remove('tab-hidden');
+                } else {
+                    p.classList.toggle('tab-hidden', p.dataset.tab !== tab);
+                }
+            });
+        }
+
+        // Feature 7: Host sparkline — draws tiny activity dots
+        function drawSparkline(canvasId, timestamps) {
+            const c = document.getElementById(canvasId);
+            if (!c) return;
+            const ctx = c.getContext('2d');
+            const W = c.width, H = c.height;
+            ctx.clearRect(0, 0, W, H);
+            if (!timestamps || timestamps.length === 0) return;
+
+            const now = Date.now();
+            const window24h = 24 * 60 * 60 * 1000;
+            ctx.fillStyle = '#00ff41';
+
+            for (const ts of timestamps) {
+                const t = new Date(ts).getTime();
+                const age = now - t;
+                if (age > window24h || age < 0) continue;
+                const x = Math.round(((window24h - age) / window24h) * W);
+                const alpha = Math.max(0.3, 1 - (age / window24h));
+                ctx.globalAlpha = alpha;
+                ctx.fillRect(x, 1, 2, H - 2);
+            }
+            ctx.globalAlpha = 1;
+        }
+    </script>
+</body>
+</html>

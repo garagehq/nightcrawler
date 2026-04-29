@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" fill="#0a0a0a"/>
+  <rect x="2" y="2" width="28" height="28" rx="2" fill="none" stroke="#00ff41" stroke-width="1.5" opacity="0.6"/>
+  <text x="8" y="23" font-family="monospace" font-size="20" font-weight="bold" fill="#00ff41">N</text>
+  <rect x="22" y="8" width="2" height="16" fill="#00ff41" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.2;0.8" dur="1s" repeatCount="indefinite"/>
+  </rect>
+</svg>

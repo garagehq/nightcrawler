@@ -1,0 +1,19 @@
+# Patches for llama.cpp OpenCL on Adreno 650 (OpenCL 2.0 device, CL 3.0 platform)
+# Apply to: ggml/src/ggml-opencl/ggml-opencl.cpp
+#
+# These patches are needed because:
+# 1. The v819 Qualcomm driver reports CL 3.0 platform but CL 2.0 device
+# 2. cl_khr_subgroups extension exists but isn't auto-defined as preprocessor macro
+# 3. clGetKernelSubGroupInfo is CL 2.1+ but device is CL 2.0
+#
+# Patch 1: Skip CL3.0 version query path (device doesn't support CL_DEVICE_OPENCL_C_ALL_VERSIONS)
+# In get_opencl_c_version(), change:
+#   if (platform_version.major >= 3) {
+# To:
+#   if (0) { // PATCHED: skip CL3 path for CL2 device
+#
+# Patch 2: Add -Dcl_khr_subgroups to kernel compile options
+# In the compile_opts string, add " -Dcl_khr_subgroups" after the -cl-std= option
+#
+# Patch 3: Hardcode subgroup size for CL 2.0 (replace clGetKernelSubGroupInfo)
+# Comment out the clGetKernelSubGroupInfo call and set: sgs = 128;

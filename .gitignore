@@ -1,0 +1,61 @@
+# Model files (too large for git)
+models/*.gguf
+models/*.bin
+
+# Kernel images (too large for git, keep on device at /sdcard/nightcrawler-kernels/)
+kernels/*.img
+kernels/*.zip
+
+# Temp files
+*.log
+*.tmp
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# Mission data (sensitive)
+logs/findings.json
+logs/timeline.jsonl
+logs/commands.jsonl
+logs/creds.enc
+logs/nightcrawler.db
+logs/nightcrawler.db-wal
+logs/nightcrawler.db-shm
+
+# Runtime PIDs
+*.pid
+
+# Captures
+*.cap
+*.hccapx
+*.pcap
+
+# SSL certs (self-signed, regenerate with openssl)
+certs/*.pem
+
+# Finetuning log (runtime data)
+nightcrawler-finetuning-logs.md
+
+# Health logs
+logs/health.log
+.claude/worktrees/
+
+# Training data (large, managed separately)
+training_data/
+
+# Claude Code
+.claude/
+
+# Capture files
+logs/captures/
+
+# Reports (generated, may contain sensitive data)
+logs/report.md
+
+# Backups (device-specific configs)
+backups/
+
+# Offline log
+logs/offline.log

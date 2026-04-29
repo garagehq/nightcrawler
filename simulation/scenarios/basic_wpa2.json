@@ -1,0 +1,30 @@
+{
+  "name": "basic_wpa2",
+  "description": "Simple WPA2 network with 4 hosts, 1 DC, 1 web server, 1 database, 1 printer",
+  "responses": [
+    {
+      "pattern": "^airodump-ng",
+      "response": {
+        "status": "success",
+        "output": " BSSID              PWR  Beacons  #Data  CH  ENC   ESSID\n AA:BB:CC:11:22:33  -42  145      89     6   WPA2  TargetNet\n DD:EE:FF:44:55:66  -67  98       12     11  WPA2  GuestWiFi",
+        "return_code": 0
+      }
+    },
+    {
+      "pattern": "^aireplay-ng",
+      "response": {
+        "status": "success",
+        "output": "12:34:56  Sending 3 directed DeAuth (reason code 7).\n12:34:57  Sending 3 directed DeAuth.\n12:34:58  WPA handshake: AA:BB:CC:11:22:33",
+        "return_code": 0
+      }
+    },
+    {
+      "pattern": "^aircrack-ng",
+      "response": {
+        "status": "success",
+        "output": "Aircrack-ng 1.7\n\n                               [00:00:03] 1024/10303 keys tested\n\n                         KEY FOUND! [ Summer2026! ]\n\n      Master Key     : AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99",
+        "return_code": 0
+      }
+    }
+  ]
+}
