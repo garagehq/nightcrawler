@@ -59,13 +59,38 @@ echo "$(date) - SSH firewall daemon started (re-applies every 60s)"
 ) &
 echo "$(date) - Early offline detection launched (2min delay)"
 
-# Nightcrawler auto-start — 8 min after boot
-# Uses a standalone bash script instead of inline busybox sh subshell.
-# The script runs on Android side and uses chroot to start Kali services.
-(
-    sleep 480
-    /system/bin/chroot /data/local/nhsystem/kalifs /bin/bash -c 'exec /bin/bash /root/nightcrawler/scripts/autostart.sh' >> /data/local/tmp/var/log/nightcrawler-autostart.log 2>&1
-) &
+# Nightcrawler auto-start — 5 min after boot, self-healing watchdog
+# Why a loop instead of (sleep 300; cmd) &?  Android kills idle subshells
+# that sleep too long. A short-sleep watchdog loop survives. It also self-
+# heals: if the webui dies later, this re-runs autostart.sh to bring it back.
+LOG=/data/local/tmp/var/log/nightcrawler-autostart.log
+CHROOT=/data/local/nhsystem/kalifs
+TRIGGER_DELAY=300   # 5 min after boot
+CHECK_INTERVAL=60   # re-check every 60s
+
+setsid nohup sh -c "
+BOOT_TIME=\$(date +%s)
+AUTOSTART_RAN=false
+LOG=$LOG
+while true; do
+    UPTIME=\$((\$(date +%s) - BOOT_TIME))
+    if [ \"\$AUTOSTART_RAN\" != 'true' ] && [ \$UPTIME -ge $TRIGGER_DELAY ]; then
+        echo \"\$(date) - Watchdog: triggering autostart at +\${UPTIME}s\" >> \$LOG
+        /system/bin/chroot $CHROOT /bin/bash -c 'exec /bin/bash /root/nightcrawler/scripts/autostart.sh' >> \$LOG 2>&1
+        AUTOSTART_RAN=true
+    fi
+    if [ \"\$AUTOSTART_RAN\" = 'true' ]; then
+        # If webui is down, restart it directly. autostart.sh's 'Already running'
+        # guard would skip it if the agent is up, so call webui-daemon.sh instead.
+        if ! netstat -tln 2>/dev/null | grep -q ':8888 '; then
+            echo \"\$(date) - Watchdog: webui :8888 not bound, restarting webui-daemon\" >> \$LOG
+            /system/bin/chroot $CHROOT /bin/bash -c 'bash /root/nightcrawler/scripts/webui-daemon.sh start' >> \$LOG 2>&1
+        fi
+    fi
+    sleep $CHECK_INTERVAL
+done
+" </dev/null >/dev/null 2>&1 &
+echo "$(date) - Nightcrawler auto-start watchdog launched (5min trigger, self-healing)"
 
 # GPU Governor — 3 min delay, then force performance mode every 60s
 (
