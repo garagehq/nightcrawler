@@ -7,14 +7,14 @@ An autonomous penetration testing agent that runs entirely on a smartphone. Drop
  ░█░▀█ █ █▄█ █▀█ ░█░ █▄▄ █▀▄ █▀█ ▀▄▀▄▀ █▄▄ ██▄ █▀▄  v0.1.0
 
  AUTONOMOUS MOBILE PENTEST AGENT
- OnePlus 8 · NetHunter · Qwen3.5-2B · OpenCL GPU
+ OnePlus 8 · NetHunter · LFM2.5-1.2B · OpenCL GPU
 ```
 
 ## What is this?
 
 **Penetration testing** (pentesting) is the practice of testing a computer network's security by simulating an attack — with the network owner's explicit permission. Professional pentesters are hired to find vulnerabilities *before* real attackers do.
 
-Nightcrawler automates this process on a phone. It uses a small AI model (2 billion parameters) running locally on the phone's GPU to decide what to do next — which host to probe, which tool to use, what to look for. No internet connection or cloud API required.
+Nightcrawler automates this process on a phone. It uses a small AI model (LFM2.5-1.2B-Instruct-Heretic, 1.2 billion parameters) running locally on the phone's GPU to decide what to do next — which host to probe, which tool to use, what to look for. No internet connection or cloud API required.
 
 ### How it works
 
@@ -44,8 +44,8 @@ The agent operates like a patient human pentester — it rotates across hosts, d
 │                   PHONE (OnePlus 8)                       │
 │                                                           │
 │  ┌─────────────┐     ┌──────────────────┐                │
-│  │  Qwen 3.5   │     │  Agent Loop      │                │
-│  │  2B model   │◄───►│  (main.py)       │                │
+│  │  LFM2.5     │     │  Agent Loop      │                │
+│  │  1.2B model │◄───►│  (main.py)       │                │
 │  │  on GPU     │     │  Decides what     │                │
 │  │  (:8080)    │     │  to do next       │                │
 │  └─────────────┘     └────────┬─────────┘                │
@@ -96,7 +96,7 @@ See [docs/FEATURES.md](docs/FEATURES.md) for the complete feature reference.
 ### Required
 - **Android phone** with [Kali NetHunter](https://www.kali.org/docs/nethunter/) (tested on OnePlus 8, Snapdragon 865)
 - **Root access** via [Magisk](https://github.com/topjohnwu/Magisk)
-- **12GB+ RAM** (model uses ~3.4GB, Android uses ~4GB, rest for tools)
+- **12GB+ RAM** (model uses ~1.3GB, Android uses ~4GB, rest for tools)
 
 ### Optional
 - **USB WiFi adapter** for offline WiFi breach mode (Ralink RT3572 recommended)
@@ -109,7 +109,7 @@ All inference via OpenCL on Adreno 650 GPU:
 
 | Model | Quantization | Prompt Speed | Generation Speed |
 |-------|-------------|-------------|-----------------|
-| Qwen3.5-2B | Q8_0 | 23.3 tok/s | 4.8 tok/s |
+| **LFM2.5-1.2B-Instruct-Heretic** (production) | Q8_0 | 115 tok/s | 13 tok/s |
 | Qwen3.5-0.8B | Q8_0 | 30.5 tok/s | 6.3 tok/s |
 | Qwen3.5-4B | Q4_0 | 10.1 tok/s | 2.0 tok/s |
 
@@ -229,7 +229,7 @@ The agent uses a simple but effective loop:
 6. **Learn** — output parser extracts findings, updates host memory
 7. **Reset context** — clear conversation, keep persistent memory, repeat
 
-The 2B model has a ~50% command success rate (inherent to its size). The agent compensates with:
+The 1.2B model has a ~50% command success rate (inherent to its size). The agent compensates with:
 - **Garbage detection** — 5-streak reset with varied few-shot examples
 - **Duplicate detection** — forces tool/target diversification
 - **Time-based stuck detection** — 5-minute backstop forces context reset

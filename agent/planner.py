@@ -82,7 +82,11 @@ class PhasePlanner:
 
         elif self.current_phase == Phase.RECON:
             hosts = findings.get("live_hosts", 0)
-            if hosts >= 3:
+            # Normal: advance when we've found enough hosts to enumerate.
+            # Exhausted: ARP scan confirmed only a couple of reachable hosts
+            # exist (client-isolated network), so don't waste cycles trying
+            # to find more — pivot to enumerating what we have.
+            if hosts >= 3 or (findings.get("recon_exhausted") and hosts >= 1):
                 return self._advance()
 
         elif self.current_phase == Phase.ENUMERATE:

@@ -3,9 +3,9 @@
 set -e
 
 NC_HOME="${NC_HOME:-/opt/nightcrawler}"
-MODEL="${NC_HOME}/models/Qwen3.5-2B-Q8_0.gguf"
+MODEL="${NC_HOME}/models/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf"
 THREADS=4
-CTX=4096
+CTX=8192
 LLM_PORT=8080
 KALI_MCP_PORT=5000
 PROXY_PORT=8800

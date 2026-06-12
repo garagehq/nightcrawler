@@ -66,6 +66,35 @@ def _stealth_filter():
             "Connection": "close",
         })
 
+def _filter_records_by_network(records, network_id):
+    """Filter a list of {'ip': ...} dicts to only those inside network_id's CIDR."""
+    if not network_id or not records:
+        return records
+    try:
+        import sqlite3 as _sql
+        import ipaddress as _ip
+        log_dir = os.environ.get("NC_LOG_DIR",
+                                 os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))
+        conn = _sql.connect(os.path.join(log_dir, "nightcrawler.db"))
+        row = conn.execute("SELECT cidr FROM networks WHERE network_id=?",
+                           (network_id,)).fetchone()
+        conn.close()
+        if not row or not row[0]:
+            return records
+        net = _ip.ip_network(row[0], strict=False)
+        def _in_net(rec):
+            ip_str = rec.get("ip", "")
+            if not ip_str:
+                return False
+            try:
+                return _ip.ip_address(ip_str) in net
+            except ValueError:
+                return False
+        return [r for r in records if _in_net(r)]
+    except Exception:
+        return records
+
+
 # Shared state — updated by the agent loop
 _state = {
     "phase": "INIT",
@@ -225,13 +254,22 @@ def api_state():
     db_cred_count = len(db_creds) or disk_findings.get("credentials", 0)
     db_vuln_count = len(db_vulns) or disk_findings.get("vulnerabilities", 0)
 
+    # Hosts come from DB so they can be filtered by selected network.
+    # disk_findings.get("hosts") is unfiltered and would leak hosts from other networks.
+    if _HAS_DB:
+        try:
+            scoped_hosts = _db.get_hosts(network_id=selected_net) if selected_net else _db.get_hosts()
+        except Exception:
+            scoped_hosts = disk_findings.get("hosts", [])
+    else:
+        scoped_hosts = disk_findings.get("hosts", [])
     state["findings"] = {
-        "hosts": disk_findings.get("live_hosts", 0),
-        "ports": sum(len(h.get("ports", [])) for h in disk_findings.get("hosts", [])),
+        "hosts": len(scoped_hosts),
+        "ports": sum(len(h.get("ports", [])) for h in scoped_hosts),
         "creds": db_cred_count,
         "vulns": db_vuln_count,
     }
-    state["hosts"] = disk_findings.get("hosts", [])
+    state["hosts"] = scoped_hosts
     state["creds"] = db_creds
     # Enrich vulns with remediation for frontend detail view
     for v in db_vulns:
@@ -250,13 +288,68 @@ def api_state():
                 _agent_feed = json.loads(_frow[0])
             _fconn.close()
         # Use agent feed if available, fall back to disk timeline
-        # Filter by selected network using the network tag on each entry
+        # Filter by selected network using the network tag on each entry.
+        # Untagged warnings/errors are allowed through ONLY if their content
+        # doesn't reference IPs from a different network — otherwise stale
+        # per-host warnings from previous networks leak into the feed.
         raw_feed = _agent_feed if _agent_feed else (feed or [])
         if selected_net and raw_feed:
-            raw_feed = [e for e in raw_feed if
-                        e.get("network", "") == selected_net or
-                        (e.get("network", "") == "" and
-                         e.get("type") in ("phase", "warning", "error"))]
+            # Get the selected network's CIDR so we can check IPs in content.
+            import ipaddress as _ipa
+            _sel_net = None
+            try:
+                if os.path.exists(_dbpath):
+                    _cconn = _sql.connect(_dbpath)
+                    _crow = _cconn.execute(
+                        "SELECT cidr FROM networks WHERE network_id=?",
+                        (selected_net,)).fetchone()
+                    _cconn.close()
+                    if _crow and _crow[0]:
+                        _sel_net = _ipa.ip_network(_crow[0], strict=False)
+            except Exception:
+                pass
+
+            import re as _refeed
+            _ip_re = _refeed.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+
+            def _keep(e):
+                # Drop entries explicitly tagged for a different network.
+                if e.get("network", "") and e.get("network", "") != selected_net:
+                    return False
+                # Otherwise check whether the entry's content references any
+                # foreign IPs. We need to do this even for entries tagged for
+                # this network — historical "OUT OF SCOPE: 192.168.8.x" or
+                # "Target 192.168.0.x..." entries got tagged with the network
+                # the agent was on at the time, but their content references
+                # IPs from somewhere else and shouldn't appear in this view.
+                if _sel_net is None:
+                    return True
+                if e.get("network", "") == selected_net and \
+                        e.get("type") not in ("command", "thought", "result",
+                                               "blocked", "warning", "error"):
+                    return True
+                # Untagged entries: only certain types pass the type filter.
+                if not e.get("network", ""):
+                    if e.get("type") not in ("phase", "warning", "error"):
+                        return False
+                content = e.get("content", "") or ""
+                ips = _ip_re.findall(content)
+                if not ips:
+                    return True  # No IPs → network-agnostic, keep
+                # Keep if AT LEAST ONE referenced IP is in-scope. Drop only
+                # if EVERY referenced IP is foreign (means the entry is purely
+                # about another network).
+                has_in_scope = False
+                for ip in ips:
+                    try:
+                        if _ipa.ip_address(ip) in _sel_net:
+                            has_in_scope = True
+                            break
+                    except ValueError:
+                        continue
+                return has_in_scope
+
+            raw_feed = [e for e in raw_feed if _keep(e)]
         state["feed"] = raw_feed[-500:]
     except Exception:
         if feed:
@@ -337,9 +430,10 @@ def api_stream():
 @app.route("/api/findings")
 def api_findings():
     """Return detailed findings — SQLite first, JSON fallback."""
+    selected_net = request.args.get("network", "")
     if _HAS_DB and _db.DB_PATH:
         try:
-            return jsonify(_db.get_findings_summary())
+            return jsonify(_db.get_findings_summary(network_id=selected_net or None))
         except Exception:
             pass
     # Fallback to JSON file
@@ -436,12 +530,15 @@ def api_export(network=None):
                 data["attack_paths"] = generate_attack_paths()
             except Exception:
                 pass
-            # Add passive capture
+            # Add passive capture, filtered to the selected network's CIDR.
             try:
                 pf = "/tmp/nc-passive-parsed.json"
                 if os.path.exists(pf):
                     with open(pf) as _pf:
-                        data["passive_capture"] = json.load(_pf)
+                        pc_data = json.load(_pf)
+                    if network:
+                        pc_data = _filter_records_by_network(pc_data, network)
+                    data["passive_capture"] = pc_data
             except Exception:
                 pass
             return jsonify(data)
@@ -469,7 +566,7 @@ def api_networks():
     return jsonify([])
 
 
-@app.route("/api/networks/<network_id>", methods=["PATCH"])
+@app.route("/api/networks/<path:network_id>", methods=["PATCH"])
 def api_edit_network(network_id):
     """Edit network name, notes, and add observations."""
     if not _HAS_DB or not _db.DB_PATH:
@@ -499,7 +596,7 @@ def api_edit_network(network_id):
     return jsonify({"ok": True, "network_id": network_id})
 
 
-@app.route("/api/networks/<network_id>", methods=["DELETE"])
+@app.route("/api/networks/<path:network_id>", methods=["DELETE"])
 def api_delete_network(network_id):
     """Delete a network and ALL associated data (hosts, vulns, creds, memories, timeline).
     Auto-kills agent before delete, restarts with 2-min delay after.
@@ -635,7 +732,7 @@ def api_delete_network(network_id):
     })
 
 
-@app.route("/api/networks/<network_id>/memory")
+@app.route("/api/networks/<path:network_id>/memory")
 def api_network_memory(network_id):
     """Get network-level memory (observations, scanned IPs)."""
     try:
@@ -1322,22 +1419,10 @@ def api_passive_results():
         if os.path.exists(results_file):
             with open(results_file) as f:
                 data = _json.load(f)
-            # Filter by network if selected
+            # Filter by network's CIDR if one is selected.
             network_id = request.args.get("network", "")
             if network_id:
-                try:
-                    import sqlite3 as _psql
-                    _pconn = _psql.connect(os.path.join(
-                        os.path.dirname(os.path.dirname(__file__)), "logs", "nightcrawler.db"))
-                    _prow = _pconn.execute("SELECT cidr FROM networks WHERE network_id=?",
-                                           (network_id,)).fetchone()
-                    _pconn.close()
-                    if _prow:
-                        _prefix = _prow[0].rsplit(".", 1)[0] + "."
-                        data = [d for d in data if d.get("ip", "").startswith(_prefix) or
-                                not d.get("ip", "").startswith("192.")]
-                except Exception:
-                    pass
+                data = _filter_records_by_network(data, network_id)
             return jsonify(data)
         return jsonify([])
     except Exception as e:

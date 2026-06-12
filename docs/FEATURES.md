@@ -43,11 +43,11 @@ Cross-referenced from `CLAUDE.md` (operational guide) and `docs/ARCHITECTURE.md`
 - Identifies: no-follow-through hosts, untested SSH, unexplored ports
 - Highlights confirmed access points and suggests priorities
 - Answers: "Given everything we know, what should we focus on?"
-- The 2B model can't strategize — the planner strategizes for it
+- The 1.2B model can't strategize — the planner strategizes for it
 
 ### Per-Host Failed Command Tracking
 - Records failed commands per host — injected as "DO NOT retry" hints in LLM system prompt
-- Prevents the 2B model from repeating the same failed approach on a host
+- Prevents the 1.2B model from repeating the same failed approach on a host
 - Complements host memory observations with explicit negative feedback
 
 ### Vulnerability Dedup
@@ -88,7 +88,7 @@ All rejection paths increment `garbage_streak`. At streak 5, `_reset_context_wit
 - On streak 5: clears context, injects a concrete example on a random host
 - **Port-matched examples**: picks SSH/DNS/HTTP/nmap examples based on target host's actual open ports
 - Prevents tool fixation (e.g., model stuck generating smbclient for hosts without port 445)
-- Key insight: don't silently reject the 2B model's commands — let them fail naturally so the model gets real feedback. Silent rejection loops are worse than wasted turns.
+- Key insight: don't silently reject the 1.2B model's commands — let them fail naturally so the model gets real feedback. Silent rejection loops are worse than wasted turns.
 
 ## Web UI & C2
 
@@ -228,7 +228,7 @@ All rejection paths increment `garbage_streak`. At streak 5, `_reset_context_wit
 - **Sliding scale**: COVER slider (0-100%) in control bar — 0% = current offensive-only throughput
 - **85% default**: ~12-20 cover requests/min mixed with ~2-3 offensive commands/min
 - **Pre-generated content**: 30 popular websites (Google, Instagram, YouTube, Reddit, Amazon, etc.), 40+ search queries, 10 API-like traffic patterns
-- **LLM-generated queries**: 10-15% of searches use the 2B model for realistic random topics (high temperature for variety)
+- **LLM-generated queries**: 10-15% of searches use the 1.2B model for realistic random topics (high temperature for variety)
 - **Realistic headers**: Chrome/Android User-Agent, proper Accept headers, follows redirects
 - **Purple throughput bars**: cover traffic shown in purple on the throughput timeline, stacked with green offensive bars
 - **Separate audit panel**: "COVER TRAFFIC" section at bottom of UI — not in agent feed, command history, or reports
@@ -308,7 +308,7 @@ All rejection paths increment `garbage_streak`. At streak 5, `_reset_context_wit
 - All are quiet techniques that complement active TCP scanning
 
 ## GPU Power Governor (`scripts/gpu-governor.sh`)
-- Android throttles Adreno 650 GPU 6x on battery (4.8→0.8 t/s, 587→305MHz)
+- Android throttles Adreno 650 GPU ~6x on battery (587→305MHz GPU clock)
 - Governor override forces `performance` mode via sysfs — full GPU clock regardless of charging state
 - Auto-reverts to `msm-adreno-tz` (power-saving) at ≤15% battery to prevent phone death
 - Checks battery level every 60s
@@ -479,5 +479,5 @@ Only steps 1 and 2 require user interaction. The rest is fully autonomous.
 
 ## Deferred to Thor (`docs/THOR_DEFERRED.md`)
 - Full NVD/Vulners offline mirror (too much RAM for phone)
-- Thinking/reasoning mode for exploit planning (2B token budget too small)
-- Complex metasploit integration (msfconsole syntax too complex for 2B)
+- Thinking/reasoning mode for exploit planning (1.2B token budget too small)
+- Complex metasploit integration (msfconsole syntax too complex for 1.2B)

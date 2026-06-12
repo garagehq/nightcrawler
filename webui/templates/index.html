@@ -1625,8 +1625,21 @@
                 const displayCount = Math.min(feed.length, FEED_PAGE);
                 document.getElementById('feed-count').textContent = feed.length > FEED_PAGE ? FEED_PAGE + '+' : feed.length;
 
-                // Only append NEW entries from the last 200
+                // Only append NEW entries from the last 200.
+                // Detect network switches: if the first entry's content+ts changed,
+                // the entire feed contents changed → force full re-render. Without
+                // this, switching to a network with fewer entries leaves stale
+                // entries (with foreign IPs) on screen.
                 const visibleFeed = feed.slice(-FEED_PAGE);
+                const firstEntryKey = visibleFeed.length > 0
+                    ? (visibleFeed[0].ts || '') + '|' + (visibleFeed[0].content || '').slice(0, 40)
+                    : '__empty__';
+                const feedSwitched = firstEntryKey !== feedBody.dataset.firstKey;
+                if (feedSwitched) {
+                    feedBody.dataset.firstKey = firstEntryKey;
+                    feedBody.innerHTML = '';  // clear stale entries
+                }
+                // After clearing on switch, currentCount is 0 → take the full-rerender branch.
                 const currentCount = feedBody.children.length;
                 if (visibleFeed.length > currentCount || currentCount <= 1) {
                     const startIdx = currentCount <= 1 ? 0 : Math.max(0, currentCount - (feed.length > FEED_PAGE ? 0 : 0));
@@ -1709,8 +1722,22 @@
             } else {
                 document.getElementById('net-all').classList.add('active');
             }
-            lastHostFingerprint = ''; // force re-render
-            pollFindings();
+            // Force a full re-render of ALL network-scoped panels. Without
+            // this, stale cards from the previous network linger until the
+            // next 1s/15s poll cycle and leak foreign IPs.
+            lastHostFingerprint = '';
+            const fb = document.getElementById('feed-body');
+            if (fb) fb.dataset.firstKey = '';  // invalidate feed switch detector
+            const pb = document.getElementById('passive-body');
+            if (pb) pb.innerHTML = '';  // clear stale passive cards immediately
+            const pcount = document.getElementById('passive-count');
+            if (pcount) pcount.textContent = '0';
+            const palert = document.getElementById('passive-networks');
+            if (palert) palert.textContent = '';
+            // Re-fetch all network-scoped data
+            if (typeof pollFindings === 'function') pollFindings();
+            if (typeof pollPassive === 'function') pollPassive();
+            if (typeof pollState === 'function') pollState();
         }
 
         // Load available networks
@@ -1729,8 +1756,20 @@
                     const btn = document.createElement('button');
                     btn.className = 'network-btn' + (selectedNetwork === nid ? ' active' : '');
                     btn.id = 'net-' + nid;
-                    btn.textContent = n.display_name || n.ssid || n.cidr;
-                    if (n.gateway_mac) btn.title = 'Gateway: ' + n.gateway_mac;
+                    // Fall back to network_id (truncated) when there's no
+                    // human-readable label. Without this fallback the button
+                    // is invisible and the user can't click delete — see
+                    // the "blank network" bug. Mark these as suspicious.
+                    let label = n.display_name || n.ssid || n.cidr;
+                    if (!label) {
+                        label = '[unnamed id=' + String(nid).substring(0, 8) + ']';
+                        btn.style.color = 'var(--text-dim)';
+                        btn.style.fontStyle = 'italic';
+                        btn.title = 'Network has no CIDR/SSID — likely junk row, safe to delete';
+                    } else if (n.gateway_mac) {
+                        btn.title = 'Gateway: ' + n.gateway_mac;
+                    }
+                    btn.textContent = label;
                     btn.onclick = () => selectNetwork(nid, n.cidr);
 
                     const edit = document.createElement('button');
@@ -1927,8 +1966,12 @@
                     try { updateMapData(hosts, data.vulns || []); } catch(e) {}
                 }
 
-                if (hosts.length > 0 && dataChanged) {
+                // Always clear when the data changed — including the empty case
+                // (otherwise stale cards from a previous network stay on screen).
+                if (dataChanged) {
                     hostsBody.innerHTML = '';
+                }
+                if (hosts.length > 0 && dataChanged) {
                     for (const h of hosts) {
                         const services = parseServices(h.info);
                         const isExpanded = expandedHost === h.ip;
@@ -2926,7 +2969,13 @@
                 const body = document.getElementById('passive-body');
                 const count = document.getElementById('passive-count');
                 const netAlert = document.getElementById('passive-networks');
-                if (!data || data.length === 0) return;
+                if (!data || data.length === 0) {
+                    // Important: clear any stale cards from a previous network selection
+                    if (body) body.innerHTML = '';
+                    if (count) count.textContent = '0';
+                    if (netAlert) netAlert.textContent = '';
+                    return;
+                }
 
                 // Dedup by ip+type
                 const seen = new Map();

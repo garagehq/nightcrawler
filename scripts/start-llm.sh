@@ -13,7 +13,7 @@
 
 TERMUX_HOME=/data/data/com.termux/files/home
 KERNEL_DIR=${TERMUX_HOME}/llama.cpp/ggml/src/ggml-opencl/kernels
-MODEL=${1:-${TERMUX_HOME}/models/Qwen3.5-2B-Unredacted-MAX.Q8_0.gguf}
+MODEL=${1:-${TERMUX_HOME}/models/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf}
 PORT=${2:-8080}
 LLAMA_LOG=/data/local/tmp/var/log/llama-server.log
 
@@ -25,7 +25,7 @@ fi
 
 echo "[*] Starting llama-server on GPU (port ${PORT})..."
 echo "[*] Model: $(basename ${MODEL})"
-echo "[*] Context: 4096 tokens"
+echo "[*] Context: 8192 tokens"
 
 # Kill old instances (SIGKILL — graceful SIGTERM doesn't work reliably
 # when llama-server is doing GPU/OpenCL work, causing dual-process OOM)

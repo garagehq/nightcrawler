@@ -10,7 +10,7 @@ mission:
 
 model:
   local:
-    path: "/opt/nightcrawler/models/Qwen3.5-2B-Unredacted-MAX.Q8_0.gguf"
+    path: "/data/data/com.termux/files/home/models/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf"
     ctx_size: 8192
     threads: 4
     port: 8080

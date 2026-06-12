@@ -50,13 +50,13 @@ The agent captures successful interactions to /root/nightcrawler/training_data/ 
 - Model produces garbage ~50%: handled by garbage detection, 5-streak resets context
 - Model refuses pentest: handled by refusal detection, re-prompts with auth context
 - Commands have markdown formatting: parser strips **, ```, ###
-- LLM takes 40-90s per turn: normal at 4.8 t/s generation
+- LLM takes ~10-30s per turn: normal at 13 t/s generation (LFM2.5-1.2B)
 - Context overflow: should not happen at 8192 ctx. If it does, log the token count
 - Agent crashes: restart with `python3 main.py &` (don't touch llama-server)
 - Memory leak: agent RSS should stay <100MB. If >200MB, restart the agent only
 
 ## Model Behavior Notes
-- The 2B model follows few-shot examples, NOT instructions
+- The 1.2B model (LFM2.5-1.2B-Instruct-Heretic) follows few-shot examples, NOT instructions
 - Phase-aware seed: RECON=nmap example, ENUMERATE=curl example
 - Temperature 0.2 for best format compliance
 - max_tokens 200 balances completeness vs garbage

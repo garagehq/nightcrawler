@@ -23,10 +23,70 @@ audit_logger = None
 upstream_url = None
 dry_run = False
 
+# Set when scope was configured with "auto" so we know to re-detect on
+# WiFi changes. When False, scope is treated as fixed (user-configured).
+_scope_is_auto = False
+_scope_last_refresh = 0
+_scope_refresh_interval = 30  # seconds — re-detect at most every 30s
+
+
+def _refresh_scope_if_needed():
+    """When scope was set to 'auto', re-detect from wlan0. This handles the
+    case where the WiFi network changes after the proxy started — without
+    this, the proxy would keep enforcing the old network's CIDR."""
+    global scope_validator, _scope_last_refresh
+    if not _scope_is_auto:
+        return
+    import time as _time
+    now = _time.time()
+    if now - _scope_last_refresh < _scope_refresh_interval:
+        return
+    _scope_last_refresh = now
+    try:
+        import subprocess as _sp, re as _re
+        result = _sp.run(["ip", "-4", "addr", "show", "wlan0"],
+                         capture_output=True, text=True, timeout=5)
+        m = _re.search(r'inet (\d+\.\d+\.\d+\.\d+)/(\d+)', result.stdout)
+        if not m:
+            return
+        our_ip = m.group(1)
+        prefix_len = m.group(2)
+        # Normalize to the network base address so /23, /22 etc. work right.
+        import ipaddress as _ip
+        try:
+            net = _ip.ip_network(f"{our_ip}/{prefix_len}", strict=False)
+            new_cidr = str(net)
+        except ValueError:
+            return
+        # Only update if the CIDR actually changed
+        current = (scope_validator.allowed_networks[0]
+                   if scope_validator.allowed_networks else None)
+        if str(current) != new_cidr:
+            octets = our_ip.split(".")
+            gw = f"{octets[0]}.{octets[1]}.{octets[2]}.1"
+            scope_validator.allowed_networks = [_ip.ip_network(new_cidr)]
+            scope_validator.excluded_hosts = {gw, our_ip}
+            print(f"[SCOPE] WiFi changed → refreshed scope to {new_cidr} "
+                  f"(our IP: {our_ip}, excluded: {gw}, {our_ip})")
+    except Exception as e:
+        print(f"[SCOPE] refresh failed: {e}")
+
 
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "nightcrawler-scope-proxy"})
+
+
+@app.route("/scope", methods=["GET"])
+def scope_info():
+    """Return the currently enforced scope (useful for debugging)."""
+    _refresh_scope_if_needed()
+    return jsonify({
+        "networks": [str(n) for n in scope_validator.allowed_networks],
+        "excluded_hosts": sorted(scope_validator.excluded_hosts),
+        "excluded_ports": sorted(scope_validator.excluded_ports),
+        "auto_refresh": _scope_is_auto,
+    })
 
 
 @app.route("/execute", methods=["POST"])
@@ -37,6 +97,9 @@ def execute():
 
     if not command:
         return jsonify({"status": "error", "error": "Empty command"}), 400
+
+    # Re-detect scope from wlan0 if config said "auto" (handles WiFi changes)
+    _refresh_scope_if_needed()
 
     # 1. Check destructive patterns
     allowed, reason = check_command(command)
@@ -94,6 +157,7 @@ def execute():
 
 def main():
     global scope_validator, rate_limiter, audit_logger, upstream_url, dry_run
+    global _scope_is_auto
 
     parser = argparse.ArgumentParser(description="Nightcrawler Scope Proxy")
     parser.add_argument("--config", default="config.yaml")
@@ -112,7 +176,8 @@ def main():
     # Auto-detect network scope from wlan0 if config says "auto"
     scope_networks = mission["scope"]["networks"]
     excluded_hosts = mission["scope"].get("excluded_hosts", [])
-    if scope_networks == ["auto"] or "auto" in scope_networks:
+    _scope_is_auto = scope_networks == ["auto"] or "auto" in scope_networks
+    if _scope_is_auto:
         import subprocess, re
         try:
             result = subprocess.run(["ip", "-4", "addr", "show", "wlan0"],
@@ -121,8 +186,14 @@ def main():
             if match:
                 our_ip = match.group(1)
                 prefix_len = match.group(2)
-                octets = our_ip.split(".")
-                scope_networks = [f"{octets[0]}.{octets[1]}.{octets[2]}.0/{prefix_len}"]
+                # Normalize to the network's canonical base so /23, /22 etc.
+                # don't produce non-canonical CIDRs like "10.1.79.0/23".
+                import ipaddress
+                try:
+                    net = ipaddress.ip_network(f"{our_ip}/{prefix_len}", strict=False)
+                    scope_networks = [str(net)]
+                except ValueError:
+                    scope_networks = ["192.168.0.0/24"]
                 print(f"[SCOPE] Auto-detected network: {scope_networks[0]} (our IP: {our_ip})")
             else:
                 scope_networks = ["192.168.0.0/24"]

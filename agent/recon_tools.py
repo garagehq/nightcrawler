@@ -195,6 +195,43 @@ def get_arp_scan_command():
     return "arp-scan -l -I wlan0 --retry 1 --timeout 500"
 
 
+def run_arp_scan(interface: str = "wlan0", timeout: int = 10) -> list:
+    """Run arp-scan and return parsed [{ip, mac, vendor}] list.
+
+    ARP scan is the right discovery tool for hostile networks:
+    - Layer-2 broadcast → bypasses most IP-level firewall rules
+    - Doesn't reveal target IPs (unicast probes do)
+    - Detects hosts that drop ICMP/TCP but answer ARP (almost all do)
+
+    Returns [] on failure or when no hosts respond.
+    """
+    import subprocess
+    import shutil
+    if not shutil.which("arp-scan"):
+        return []
+    try:
+        result = subprocess.run(
+            ["arp-scan", "-l", "-I", interface, "--retry", "1", "--timeout", "500"],
+            capture_output=True, text=True, timeout=timeout
+        )
+        hosts = []
+        # Output lines look like:  "10.1.79.250\t70:69:5a:31:a3:bf\tCisco Systems, Inc"
+        line_re = re.compile(
+            r'^((?:\d{1,3}\.){3}\d{1,3})\s+([0-9a-fA-F:]{17})\s*(.*)$'
+        )
+        for line in result.stdout.splitlines():
+            m = line_re.match(line.strip())
+            if m:
+                hosts.append({
+                    "ip": m.group(1),
+                    "mac": m.group(2).upper(),
+                    "vendor": m.group(3).strip(),
+                })
+        return hosts
+    except Exception:
+        return []
+
+
 def get_banner_grab_command(ip, port):
     """Generate a netcat banner grab command."""
     return f"nc -w 3 -v {ip} {port}"

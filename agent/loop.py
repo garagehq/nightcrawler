@@ -30,6 +30,13 @@ except ImportError:
     structured_log = None
 
 
+# Match any IPv4 address (private or public). Used wherever we need to
+# extract target IPs from a command for dedup/dead-end/recent-IP logic.
+# Previously these spots had a hardcoded `192\.168\.1\.\d+` regex which
+# broke on every other network the agent runs on.
+_IPV4_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+
+
 class AgentLoop:
     """Main decision engine — calls LLM, executes commands through proxy."""
 
@@ -52,6 +59,11 @@ class AgentLoop:
         self.watchdog = Watchdog(0)  # uptime tracker only, no expiry
         self.consecutive_errors = 0
         self.garbage_streak = 0
+        # Separate counter — garbage_streak gets reset to 0 every time the
+        # LLM produces parseable output (which it does even when targeting
+        # the wrong host), so same-host rejections never accumulate via that
+        # path. Track them independently and force a context reset at 3.
+        self.same_host_streak = 0
         self.recent_commands = []  # last N commands for dup detection
         self.last_executed_ip = ""  # for same-host enforcement
         self.last_command_time = time.time()  # for time-based stuck detection
@@ -68,27 +80,44 @@ class AgentLoop:
         self.total_blocked = 0
         self.total_garbage = 0
 
-        # Detect current network — only suggest hosts on THIS network
+        # Detect current network — only suggest hosts on THIS network.
+        # Use ipaddress CIDR containment instead of .startswith() so that
+        # networks larger than /24 (like /23, /22) are matched correctly.
         self.current_network_id = ""
+        self._detect_current_network()
+
+    def _detect_current_network(self):
+        """Find the DB network_id whose CIDR contains our wlan0 IP."""
         try:
             import subprocess as _sp
+            import ipaddress as _ip
             _r = _sp.run(["ip", "-4", "addr", "show", "wlan0"],
                          capture_output=True, text=True, timeout=5)
-            _m = re.search(r'inet (\d+\.\d+\.\d+)\.\d+', _r.stdout)
-            if _m:
-                _prefix = _m.group(1) + "."
-                for _n in db.get_networks():
-                    if _n.get("cidr", "").startswith(_prefix.rstrip(".")):
+            _m = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/(\d+)', _r.stdout)
+            if not _m:
+                return
+            our_ip = _ip.ip_address(_m.group(1))
+            for _n in db.get_networks():
+                cidr = _n.get("cidr", "")
+                if not cidr or cidr == "auto":
+                    continue
+                try:
+                    if our_ip in _ip.ip_network(cidr, strict=False):
                         self.current_network_id = _n["network_id"]
-                        break
+                        return
+                except ValueError:
+                    continue
         except Exception:
             pass
 
     def _get_hosts(self):
-        """Get hosts filtered to current network only."""
+        """Get hosts filtered to current network only.
+        Returns [] (not all hosts) when network isn't detected — otherwise
+        the agent would target hosts from previous networks.
+        """
         if self.current_network_id:
             return db.get_hosts(network_id=self.current_network_id)
-        return self._get_hosts()
+        return []
 
     async def run(self):
         """Main loop — runs until mission complete or killed."""
@@ -99,6 +128,19 @@ class AgentLoop:
         try:
             if structured_log:
                 structured_log.init()
+        except Exception:
+            pass
+
+        # Kick off continuous passive capture at boot. On client-isolated
+        # networks (hotel/guest WiFi), broadcast traffic is the only reliable
+        # discovery signal — DHCP renewals, mDNS announcements, ARP requests
+        # happen on their own schedule, so we need to listen continuously
+        # rather than running short 2-min windows every ~50 commands (which
+        # often never fires if the agent runs few commands).
+        try:
+            from agent.passive_capture import start_continuous
+            start_continuous(interface="wlan0", cycle_seconds=300)
+            push_feed("phase", "Continuous passive capture started (5-min cycles)")
         except Exception:
             pass
 
@@ -128,9 +170,42 @@ class AgentLoop:
                 f"REASONING: Ping sweep for live hosts.\n"
                 f"COMMAND: nmap -sn -T2 {_seed_subnet}"
             )
-            # Run real ping sweep on current network
+            # Run REAL discovery sweep — ARP scan first (more reliable on
+            # client-isolated networks where ICMP is silently dropped), then
+            # nmap to catch anything ARP missed. Both results merged into DB.
             try:
                 import subprocess
+                arp_hosts = recon_tools.run_arp_scan(interface="wlan0", timeout=15)
+                arp_ips = []
+                for h in arp_hosts:
+                    arp_ips.append(h["ip"])
+                    try:
+                        db.upsert_host(
+                            h["ip"], ports=[], mac=h["mac"],
+                            info=f"Discovered via ARP scan ({h.get('vendor','')})".strip(),
+                        )
+                    except Exception:
+                        pass
+                if arp_hosts:
+                    push_feed("result",
+                              f"ARP scan: {len(arp_hosts)} hosts on {_seed_subnet} "
+                              f"(layer-2, bypasses IP filtering)")
+                    # On a client-isolated network ARP reveals a small,
+                    # authoritative host count. If we find very few hosts
+                    # via ARP across the full subnet, mark recon exhausted
+                    # so the planner can advance to ENUMERATE instead of
+                    # spinning RECON forever trying to find hosts that
+                    # don't exist from our vantage point.
+                    if len(arp_hosts) <= 5 and self.current_network_id:
+                        try:
+                            _exh = db.get_state("recon_exhausted_per_net", {})
+                            _exh[self.current_network_id] = True
+                            db.set_state("recon_exhausted_per_net", _exh)
+                            push_feed("phase",
+                                      f"Recon exhausted: only {len(arp_hosts)} "
+                                      f"hosts reachable. Pivoting to ENUMERATE.")
+                        except Exception:
+                            pass
                 sweep = subprocess.run(
                     ["nmap", "-sn", "-T3", "--max-retries", "1", _seed_subnet],
                     capture_output=True, text=True, timeout=30,
@@ -139,6 +214,14 @@ class AgentLoop:
                 live_ips = _re.findall(
                     r'Nmap scan report for (' + _seed_prefix.replace('.', r'\.') + r'\d+)', sweep.stdout
                 )
+                # Merge: arp_ips + live_ips (dedup, keep order)
+                _seen = set()
+                merged = []
+                for _ip in arp_ips + live_ips:
+                    if _ip not in _seen:
+                        _seen.add(_ip)
+                        merged.append(_ip)
+                live_ips = merged
                 # Auto-detect excluded hosts
                 excluded = set()
                 _cfg_excluded = self.config["mission"]["scope"].get("excluded_hosts", [])
@@ -467,8 +550,11 @@ class AgentLoop:
                     if notes_text:
                         system += f"\nANALYST NOTES:{notes_text}"
 
-                # Add host memory (compact — max 200 tokens)
-                memory_ctx = host_memory.build_prompt_context(max_tokens=200)
+                # Add host memory (compact — max 200 tokens), scoped to the
+                # current network so the LLM doesn't see hosts from prior
+                # engagements (which would cause out-of-scope targeting).
+                memory_ctx = host_memory.build_prompt_context(
+                    max_tokens=200, network_id=self.current_network_id)
                 if memory_ctx:
                     system += f"\n{memory_ctx}"
 
@@ -542,8 +628,7 @@ class AgentLoop:
 
                 if command:
                     # Skip commands targeting known dead-end hosts
-                    import re as _re
-                    target_ips = _re.findall(r'192\.168\.1\.\d+', command)
+                    target_ips = _IPV4_RE.findall(command)
                     if target_ips and all(self._should_skip_host(ip) for ip in target_ips):
                         push_feed("warning", f"Skipped dead-end host: {target_ips[0]}")
                         self.context.append_user(
@@ -575,19 +660,32 @@ class AgentLoop:
                                     self.active_playbook = None
                                     self.playbook_step = 0
                             else:
+                                self.same_host_streak += 1
                                 self.garbage_streak += 1
                                 push_feed("warning",
-                                          f"Same host rejected: {target_ips[0]}")
+                                          f"Same host rejected: {target_ips[0]} "
+                                          f"(streak {self.same_host_streak})")
                                 try:
                                     if structured_log:
-                                        structured_log.log("WARNING", f"Same host rejected: {target_ips[0]}")
+                                        structured_log.log("WARNING",
+                                                           f"Same host rejected: {target_ips[0]} "
+                                                           f"(streak {self.same_host_streak})")
                                 except Exception:
                                     pass
-                                self.context.append_user(
-                                    f"You just scanned {target_ips[0]}. "
-                                    "ROTATE to a DIFFERENT host for stealth. "
-                                    "REASONING: [text] COMMAND: [different host]"
-                                )
+                                # After 3 same-host rejections in a row, the
+                                # model is fixated. Force a context reset with
+                                # a host-rotation few-shot example.
+                                if self.same_host_streak >= 3:
+                                    push_feed("warning",
+                                              "Same-host fixation — resetting context")
+                                    self._reset_context_with_fewshot()
+                                    self.same_host_streak = 0
+                                else:
+                                    self.context.append_user(
+                                        f"You just scanned {target_ips[0]}. "
+                                        "ROTATE to a DIFFERENT host for stealth. "
+                                        "REASONING: [text] COMMAND: [different host]"
+                                    )
                                 continue
 
                     # Validate command before execution
@@ -670,6 +768,10 @@ class AgentLoop:
 
                     self.total_commands += 1
                     self.last_command_time = time.time()
+                    # Reset same-host streak — we successfully executed a
+                    # command on a different host (otherwise we'd have hit
+                    # the same-host rejection branch above and skipped here).
+                    self.same_host_streak = 0
                     if target_ips:
                         self.last_executed_ip = target_ips[0]
                     if result.get("status") == "blocked":
@@ -693,8 +795,7 @@ class AgentLoop:
 
                     # Auto-extract host observations + track scanned IPs
                     try:
-                        import re as _re
-                        ips_in_cmd = _re.findall(r'192\.168\.1\.\d+', command)
+                        ips_in_cmd = _IPV4_RE.findall(command)
                         net_id = getattr(self.mission_log, 'network_id', '')
                         for ip in set(ips_in_cmd):
                             # Track IP as scanned at network level
@@ -818,7 +919,7 @@ class AgentLoop:
                             if mem.get("status") == "dead-end":
                                 dead_end_ips.add(mem.get("ip", ""))
 
-                        recent_ips = set(re.findall(r'192\.168\.1\.\d+',
+                        recent_ips = set(_IPV4_RE.findall(
                                          " ".join(self.recent_commands[-3:])))
 
                         from agent.planner import Phase as _Ph
@@ -985,51 +1086,10 @@ class AgentLoop:
                     health = await self.llm.health_check()
                     self.ui.update_backend_status(health)
 
-                # Passive capture — use total_commands (persists across restarts)
-                # Start every ~50 commands, ingest every ~60
-                if self.total_commands > 0 and self.total_commands % 50 == 0:
-                    try:
-                        from agent.passive_capture import start_capture, _running
-                        if not _running:
-                            # First ingest any previous results
-                            try:
-                                from agent.passive_capture import parse_capture, ingest_findings
-                                old = parse_capture()
-                                if old:
-                                    ingest_findings(old)
-                            except Exception:
-                                pass
-                            start_capture(duration=120)
-                            push_feed("phase", "Passive capture started (2 min)")
-                    except Exception:
-                        pass
-
-                # Periodic host re-sweep every ~200 commands (~3-4 hours)
-                # Discovers new hosts that joined the network since initial sweep
-                if self.total_commands > 0 and self.total_commands % 200 == 0:
-                    try:
-                        from agent.net_detect import get_current_network
-                        _subnet = get_current_network()[0]
-                        _prefix = get_current_network()[1]
-                        import subprocess as _rsp
-                        _rsweep = _rsp.run(
-                            ["nmap", "-sn", "-T3", "--max-retries", "1", _subnet],
-                            capture_output=True, text=True, timeout=45)
-                        _rlive = re.findall(
-                            r'Nmap scan report for (' + _prefix.replace('.', r'\.') + r'\d+)',
-                            _rsweep.stdout)
-                        _new_count = 0
-                        for _rip in _rlive:
-                            existing = [h for h in self._get_hosts() if h["ip"] == _rip]
-                            if not existing:
-                                db.upsert_host(_rip, ports=[], info="Discovered via periodic re-sweep")
-                                _new_count += 1
-                        if _new_count > 0:
-                            push_feed("result", f"Re-sweep: {_new_count} new hosts discovered ({len(_rlive)} total alive)")
-                    except Exception:
-                        pass
-
-                if self.total_commands > 0 and self.total_commands % 55 == 0:
+                # Passive capture now runs continuously (started at boot).
+                # Re-ingest results every ~25 commands so the UI sees fresh
+                # discoveries promptly without waiting for the cycle to end.
+                if self.total_commands > 0 and self.total_commands % 25 == 0:
                     try:
                         from agent.passive_capture import parse_capture, ingest_findings
                         findings = parse_capture()
@@ -1038,6 +1098,52 @@ class AgentLoop:
                             if count > 0:
                                 push_feed("result",
                                           f"Passive capture: {count} new observations from {len(findings)} packets")
+                    except Exception:
+                        pass
+
+                # Periodic host re-sweep every ~200 commands (~3-4 hours)
+                # Periodic re-discovery — every ~100 commands. ARP scan first
+                # (catches client-isolated hosts that ignore ICMP), then nmap
+                # ping sweep. Combined results upserted to DB.
+                if self.total_commands > 0 and self.total_commands % 100 == 0:
+                    try:
+                        from agent.net_detect import get_current_network
+                        _subnet, _prefix, _, _ = get_current_network()
+                        _all_ips = set()
+
+                        # ARP scan
+                        _arp_hosts = recon_tools.run_arp_scan(timeout=15)
+                        for _h in _arp_hosts:
+                            _all_ips.add(_h["ip"])
+                            try:
+                                db.upsert_host(
+                                    _h["ip"], ports=[], mac=_h["mac"],
+                                    info=f"Discovered via ARP re-sweep ({_h.get('vendor','')})".strip())
+                            except Exception:
+                                pass
+
+                        # nmap ping sweep
+                        import subprocess as _rsp
+                        _rsweep = _rsp.run(
+                            ["nmap", "-sn", "-T3", "--max-retries", "1", _subnet],
+                            capture_output=True, text=True, timeout=45)
+                        for _rip in re.findall(
+                                r'Nmap scan report for (' + _prefix.replace('.', r'\.') + r'\d+)',
+                                _rsweep.stdout):
+                            if _rip not in _all_ips:
+                                _all_ips.add(_rip)
+                                existing = [h for h in self._get_hosts() if h["ip"] == _rip]
+                                if not existing:
+                                    db.upsert_host(_rip, ports=[],
+                                                   info="Discovered via periodic re-sweep")
+
+                        # Count truly new ones
+                        _known = {h["ip"] for h in self._get_hosts()}
+                        _new = len(_all_ips - _known) if _all_ips else 0
+                        if _all_ips:
+                            push_feed("result",
+                                      f"Re-sweep: {len(_arp_hosts)} via ARP + "
+                                      f"{len(_all_ips)} total alive on {_subnet}")
                     except Exception:
                         pass
 
@@ -1637,6 +1743,7 @@ class AgentLoop:
             "REASONING: [text] COMMAND: [command]"
         )
         self.garbage_streak = 0
+        self.same_host_streak = 0
         self.recent_commands.clear()
         self.last_executed_ip = ""
         self.multi_turn_remaining = 0
@@ -1698,7 +1805,7 @@ class AgentLoop:
                 return True
         return False
 
-    # _is_refusal removed — abliterated model (Qwen3.5-2B-Unredacted-MAX) doesn't refuse
+    # _is_refusal removed — abliterated model (LFM2.5-1.2B-Instruct-Heretic) doesn't refuse
 
     @staticmethod
     def _parse_reasoning(response: str) -> str:

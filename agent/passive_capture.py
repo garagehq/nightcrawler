@@ -19,13 +19,44 @@ CAPTURE_FILE = "/tmp/nc-passive.pcap"
 PARSED_FILE = "/tmp/nc-passive-parsed.json"
 _capture_proc = None
 _running = False
+_continuous = False  # set True to make captures auto-restart in a loop
+
+
+def is_running() -> bool:
+    """True if tcpdump is currently capturing.
+
+    Checks the live process, not just the module flag — so stale state from
+    a crashed capture doesn't keep the function returning True forever.
+    """
+    global _capture_proc, _running
+    if _capture_proc is None:
+        _running = False
+        return False
+    if _capture_proc.poll() is not None:
+        # Process exited
+        _running = False
+        _capture_proc = None
+        return False
+    return _running
 
 
 def start_capture(interface="wlan0", duration=300):
     """Start background tcpdump for broadcast/multicast traffic."""
     global _capture_proc, _running
-    if _running:
+    if is_running():
         return
+
+    # Kill any orphan tcpdump processes left over from a previous agent
+    # restart. is_running() only checks THIS process's tracking, but tcpdump
+    # children inherited by init survive across agent restarts and would
+    # accumulate (4 running after a few restarts in testing).
+    try:
+        subprocess.run(
+            ["pkill", "-f", f"tcpdump.*{CAPTURE_FILE}"],
+            timeout=5
+        )
+    except Exception:
+        pass
 
     # Capture broadcast traffic only: mDNS, NBNS, DHCP, ARP
     # BPF filter: only broadcast/multicast, limited rate
@@ -51,6 +82,44 @@ def start_capture(interface="wlan0", duration=300):
         t.start()
     except Exception:
         _running = False
+
+
+def start_continuous(interface="wlan0", cycle_seconds=300):
+    """Run passive capture in an infinite loop — best for stealth recon.
+
+    On a client-isolated network, broadcast traffic is the only reliable
+    signal of other hosts (DHCP renewals, mDNS announcements, ARP requests).
+    A one-shot 2-minute capture misses most of it. Run continuously instead.
+    Idempotent — calling twice has no effect.
+    """
+    global _continuous
+    if _continuous:
+        return
+    _continuous = True
+
+    def _loop():
+        while _continuous:
+            try:
+                start_capture(interface=interface, duration=cycle_seconds)
+                # Wait for the capture to finish, then parse + ingest results
+                # before the next cycle so each cycle's data lands in the DB.
+                time.sleep(cycle_seconds + 5)
+                try:
+                    findings = parse_capture()
+                    if findings:
+                        ingest_findings(findings)
+                except Exception:
+                    pass
+            except Exception:
+                time.sleep(30)  # back off on repeated failure
+
+    threading.Thread(target=_loop, daemon=True).start()
+
+
+def stop_continuous():
+    """Stop the continuous capture loop after the current cycle completes."""
+    global _continuous
+    _continuous = False
 
 
 def stop_capture():
@@ -248,13 +317,25 @@ def ingest_findings(findings):
     added = 0
     foreign_nets = set()
 
+    # Our own IP shows up in our own ARP requests (when WE scan something,
+    # we broadcast ARP). Filter it out so the agent doesn't end up with a
+    # phantom "host" pointing at itself, which then triggers same-host
+    # rejection loops and out-of-scope blocks.
+    from agent.net_detect import get_current_network as _gcn
+    try:
+        _, _, _our_ip, _gw_ip = _gcn()
+    except Exception:
+        _our_ip, _gw_ip = None, None
+
     for f in findings:
         ip = f.get("ip", "")
         if not ip:
             continue
 
-        # Skip non-routable/broadcast IPs
+        # Skip non-routable/broadcast/self IPs
         if ip in ("0.0.0.0", "255.255.255.255") or ip.startswith("224.") or ip.startswith("239."):
+            continue
+        if _our_ip and ip == _our_ip:
             continue
 
         hostname = f.get("hostname", "")

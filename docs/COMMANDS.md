@@ -17,14 +17,14 @@ ssh -p 9022 shell@<tailscale-ip>
 
 ## GPU Inference (OpenCL - Recommended)
 
-### Run 2B Q8_0 on GPU (best quality + speed balance)
+### Run LFM2.5-1.2B Q8_0 on GPU (production model — fastest + best balance)
 ```bash
 TERMUX_HOME=/data/data/com.termux/files/home
 su 10393 -c "export LD_LIBRARY_PATH=/vendor/lib64; \
   export GGML_OPENCL_PLATFORM=0; export GGML_OPENCL_DEVICE=0; \
   cd $TERMUX_HOME/llama.cpp/ggml/src/ggml-opencl/kernels; \
   $TERMUX_HOME/llama.cpp/build-fast/bin/llama-cli \
-  -m $TERMUX_HOME/models/Qwen3.5-2B-Unredacted-MAX.Q8_0.gguf \
+  -m $TERMUX_HOME/models/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf \
   -ngl 99 -c 512 -n 200 -no-cnv \
   -p 'Your prompt here'"
 ```
@@ -53,7 +53,9 @@ su 10393 -c "export LD_LIBRARY_PATH=/vendor/lib64; \
   -p 'Your prompt here'"
 ```
 
-## CPU Inference (ollama)
+## CPU Inference (ollama — legacy fallback only)
+Production runs LFM2.5-1.2B on the GPU (see above). ollama/CPU is a legacy
+fallback; the Qwen tag below is kept only as an example.
 ```bash
 # Enter Kali chroot first, then:
 export TMPDIR=/tmp OLLAMA_VULKAN=0 OLLAMA_KEEP_ALIVE=1m
@@ -78,9 +80,9 @@ ps -ef | grep llama-cli | grep -v grep | awk '{print $2}' | xargs kill -9
 ## Performance Summary
 | Model | Quant | GPU Gen | GPU Prompt | Use Case |
 |-------|-------|---------|------------|----------|
-| 0.8B | Q8_0 | 6.3 t/s | 30.5 t/s | Quick tasks, fastest response |
-| 2B | Q8_0 | 4.8 t/s | 23.3 t/s | Good quality + speed balance |
-| 4B | Q4_0 | 2.0 t/s | 10.1 t/s | Best quality, ~2 words/sec |
+| **LFM2.5-1.2B-Instruct-Heretic** | Q8_0 | **13 t/s** | **115 t/s** | **Production** — fastest + best balance |
+| Qwen3.5-0.8B | Q8_0 | 6.3 t/s | 30.5 t/s | Legacy alt, quick tasks |
+| Qwen3.5-4B | Q4_0 | 2.0 t/s | 10.1 t/s | Legacy alt, best Qwen quality |
 
 ## Useful Flags
 ```

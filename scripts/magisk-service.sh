@@ -32,7 +32,7 @@ if [ -r ${START_SEMAPHOR} ] ; then
     (
         TERMUX_HOME=/data/data/com.termux/files/home
         KERNEL_DIR=${TERMUX_HOME}/llama.cpp/ggml/src/ggml-opencl/kernels
-        MODEL=${TERMUX_HOME}/models/Qwen3.5-2B-Unredacted-MAX.Q8_0.gguf
+        MODEL=${TERMUX_HOME}/models/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf
         PORT=8080
         REFRESH=14400
         COOLDOWN=1200

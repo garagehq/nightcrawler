@@ -203,7 +203,7 @@ echo "$(date) - GPU governor launched (3min delay)"
         cd ${TERMUX_HOME}/llama.cpp/ggml/src/ggml-opencl/kernels
 
         nohup ${TERMUX_HOME}/llama.cpp/build-fast/bin/llama-server \
-            -m ${TERMUX_HOME}/models/Qwen3.5-2B-Unredacted-MAX.Q8_0.gguf \
+            -m ${TERMUX_HOME}/models/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf \
             -ngl 99 -c 8192 -t 4 -np 1 \
             --port ${PORT} --host 127.0.0.1 \
             --jinja --reasoning off --log-disable \

@@ -7,7 +7,7 @@
 
 ## Overview
 
-Nightcrawler is a shell-based autonomous penetration testing agent that runs entirely within a [Kali NetHunter](https://www.kali.org/docs/nethunter/) chroot on an Android phone. It uses a local 2B-parameter language model as its reasoning engine and the official [Kali Linux MCP server](https://www.kali.org/tools/mcp-kali-server/) as its tool interface.
+Nightcrawler is a shell-based autonomous penetration testing agent that runs entirely within a [Kali NetHunter](https://www.kali.org/docs/nethunter/) chroot on an Android phone. It uses a local 1.2B-parameter language model (LFM2.5-1.2B-Instruct-Heretic from Liquid AI) as its reasoning engine and the official [Kali Linux MCP server](https://www.kali.org/tools/mcp-kali-server/) as its tool interface.
 
 **What makes it different from a vulnerability scanner?** Traditional scanners run a fixed checklist against every host. Nightcrawler *reasons* about what to do next — it picks targets, chooses tools, interprets output, and builds up knowledge over time. It operates more like a human pentester with infinite patience.
 
@@ -27,7 +27,7 @@ The model constructs raw CLI commands (e.g., `nmap -sS -T2 192.168.1.0/24`) rath
 │  │                                                               │  │
 │  │  ┌─────────────┐                                             │  │
 │  │  │  LLM        │  Constructs raw Kali commands               │  │
-│  │  │  (2B model) │  e.g. "nmap -sS 192.168.1.0/24"            │  │
+│  │  │ (1.2B model)│  e.g. "nmap -sS 192.168.1.0/24"            │  │
 │  │  │  llama.cpp  │                                             │  │
 │  │  │  :8080      │                                             │  │
 │  │  └──────┬──────┘                                             │  │
@@ -164,7 +164,7 @@ This makes the agent much harder to detect than traditional scanners. No single 
 
 ## Exploit Pipeline
 
-The 2B model is too small to reliably plan multi-step attacks. The exploit pipeline compensates with external intelligence:
+The 1.2B model is too small to reliably plan multi-step attacks. The exploit pipeline compensates with external intelligence:
 
 ```
 Host selected for exploitation
@@ -187,7 +187,7 @@ Host selected for exploitation
       "Focus on host X — has SSH + default creds"
 ```
 
-**Why bypass the LLM for playbooks?** The 2B model can generate *similar-but-wrong* commands when following multi-step instructions. For example, it might produce `smbclient //192.168.1.5/share` instead of `smbclient -N -L //192.168.1.5/`. Direct execution ensures playbook steps run exactly as specified.
+**Why bypass the LLM for playbooks?** The 1.2B model can generate *similar-but-wrong* commands when following multi-step instructions. For example, it might produce `smbclient //192.168.1.5/share` instead of `smbclient -N -L //192.168.1.5/`. Direct execution ensures playbook steps run exactly as specified.
 
 ---
 
@@ -246,13 +246,18 @@ All data is stored in a SQLite database (`logs/nightcrawler.db`) with WAL mode f
 
 | Component | RAM Usage |
 |-----------|----------|
-| LLM model (Q8_0) | ~2.74 GB |
-| KV cache (8192 ctx) | ~0.6 GB |
+| LLM model (LFM2.5-1.2B Q8_0) | ~1.2 GB (1186 MiB GPU buffer) |
+| KV cache + compute (8192 ctx) | ~0.16 GB (LFM2 recurrent/conv layers — ~24 MiB attention KV + ~136 MiB compute) |
 | Android system | ~4-5 GB |
 | Agent + webui | ~50 MB |
-| **Remaining for tools** | **~3.5 GB** |
+| **Remaining for tools** | **~5.5 GB** |
 
-**Critical:** Never run two LLM server instances simultaneously. Dual instances caused OOM crashes in testing (~3GB x 2 = phone reboot).
+LFM2.5-1.2B uses a hybrid conv+attention architecture (Gated Delta Net + short
+conv layers), so its KV cache is much smaller than a comparable pure-transformer.
+Total GPU footprint is ~1.3-1.4 GB — roughly 2 GB less than the older Qwen3.5-2B
+model (~3.34 GB), freeing memory for tools.
+
+**Critical:** Never run two LLM server instances simultaneously. Dual instances caused OOM crashes in testing.
 
 ---
 
@@ -293,7 +298,7 @@ The LLM runs on the Android side (for GPU access) but the agent reaches it at `h
 
 ## Self-Healing
 
-The agent has multiple recovery mechanisms to handle the 2B model's ~50% garbage rate:
+The agent has multiple recovery mechanisms to handle the 1.2B model's ~50% garbage rate:
 
 | Mechanism | Trigger | Action |
 |-----------|---------|--------|

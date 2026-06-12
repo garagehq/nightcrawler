@@ -138,9 +138,9 @@ def parse_output(ip: str, mac: str, command: str, output: str,
         except Exception:
             pass
 
-        # Extract A records → new targets
+        # Extract A records → new targets (any private IPv4)
         a_records = re.findall(
-            r'(\S+)\.\s+\d+\s+IN\s+A\s+(192\.168\.1\.\d+)', out)
+            r'(\S+)\.\s+\d+\s+IN\s+A\s+((?:\d{1,3}\.){3}\d{1,3})', out)
         for hostname, target_ip in a_records:
             result['new_targets'].append(target_ip)
             host_memory.add_observation(

@@ -466,12 +466,31 @@ def auto_extract_observations(ip: str, mac: str, command: str,
         add_observation(mac, obs, source="agent", ip=ip)
 
 
-def build_prompt_context(max_tokens: int = 300) -> str:
+def build_prompt_context(max_tokens: int = 300, network_id: str = None) -> str:
     """Build a concise memory context for the LLM system prompt.
-    Prioritizes interesting hosts and recent observations."""
+    Prioritizes interesting hosts and recent observations.
+
+    When network_id is provided, only include memories for hosts in that
+    network. This prevents the LLM from seeing (and targeting) hosts from
+    previous engagements/networks.
+    """
     memories = get_all_memories()
     if not memories:
         return ""
+
+    if network_id:
+        # Filter memories down to hosts that live in this network according to DB.
+        try:
+            scoped_macs = {h.get("mac") for h in db.get_hosts(network_id=network_id) if h.get("mac")}
+            scoped_ips = {h.get("ip") for h in db.get_hosts(network_id=network_id) if h.get("ip")}
+            memories = {
+                mac: mem for mac, mem in memories.items()
+                if mac in scoped_macs or mem.get("ip") in scoped_ips
+            }
+            if not memories:
+                return ""
+        except Exception:
+            pass
 
     lines = []
     char_budget = max_tokens * 4  # rough chars-to-tokens
@@ -496,9 +515,11 @@ def build_prompt_context(max_tokens: int = 300) -> str:
         # Build compact line with port info
         parts = [f"{ip}"]
 
-        # Include ports from DB for tool matching
+        # Include ports from DB for tool matching (scoped to network if known).
         try:
-            for h in db.get_hosts():
+            host_list = (db.get_hosts(network_id=network_id)
+                         if network_id else db.get_hosts())
+            for h in host_list:
                 if h.get("mac") == mac or h.get("ip") == ip:
                     ports = h.get("ports", [])
                     if ports:

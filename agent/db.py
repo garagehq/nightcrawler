@@ -209,8 +209,21 @@ def _ts() -> str:
 
 def upsert_network(network_id: str = "", cidr: str = "", gateway_mac: str = "",
                     ssid: str = "", public_ip: str = "", gateway: str = ""):
-    """Insert or update a network. network_id is the primary key."""
+    """Insert or update a network. network_id is the primary key.
+
+    Defensive: reject 'auto' as a CIDR (it's a config placeholder, not a real
+    network). If network_id looks like a CIDR string (caller misuse), promote
+    it to cidr so the row at least has a valid label.
+    """
     import hashlib
+    if cidr == "auto":
+        cidr = ""
+    # If caller passed a CIDR-like string as network_id (legacy bug), promote
+    # it to the cidr field — but try to find an existing network that actually
+    # contains it first so we don't create a duplicate.
+    if network_id and "/" in network_id and not cidr:
+        cidr = network_id
+        network_id = ""  # force regenerate or lookup below
     if not network_id:
         # Generate from gateway MAC or CIDR
         seed = gateway_mac or cidr or "unknown"
@@ -278,11 +291,26 @@ def upsert_host(ip: str, ports: list = None, info: str = "",
     if not mac:
         mac = _extract_mac(info) or f"unknown-{ip}"
     if not network:
-        # Try to find existing network_id for this IP's subnet
-        _cidr = _ip_to_network(ip)
-        _existing_net = conn.execute(
-            "SELECT network_id FROM networks WHERE cidr=?", (_cidr,)).fetchone()
-        network = _existing_net[0] if _existing_net else _cidr
+        # Find an existing network whose CIDR *contains* this IP. Previously
+        # we only matched /24, which created duplicate junk rows for /22 /23
+        # networks (e.g. an IP in 172.18.180.0/22 would get keyed as
+        # 172.18.180.0/24 and miss the real entry).
+        try:
+            ip_obj = ipaddress.ip_address(ip)
+            for row in conn.execute(
+                    "SELECT network_id, cidr FROM networks WHERE cidr != '' AND cidr != 'auto'"
+            ).fetchall():
+                try:
+                    if ip_obj in ipaddress.ip_network(row["cidr"], strict=False):
+                        network = row["network_id"]
+                        break
+                except (ValueError, KeyError):
+                    continue
+        except ValueError:
+            pass
+        if not network:
+            # No existing match — fall back to /24 derivation
+            network = _ip_to_network(ip)
 
     # Also check if this IP exists under a different MAC (IP changed)
     if mac.startswith("unknown-"):
@@ -291,6 +319,26 @@ def upsert_host(ip: str, ports: list = None, info: str = "",
         ).fetchone()
         if existing_by_ip:
             mac = existing_by_ip["mac"]
+    else:
+        # Reverse case: we have a real MAC, but there's already a placeholder
+        # row for this IP (e.g. inserted by an earlier ping sweep). Merge the
+        # placeholder's data into this upsert and delete the duplicate, so
+        # the dashboard doesn't show 2 rows for the same host.
+        placeholder = conn.execute(
+            "SELECT mac, ports, info, hostname FROM hosts "
+            "WHERE ip=? AND mac LIKE 'unknown-%'", (ip,)
+        ).fetchone()
+        if placeholder:
+            try:
+                old_ports = json.loads(placeholder["ports"])
+                ports = sorted(set((ports or []) + old_ports))
+            except Exception:
+                pass
+            if not info and placeholder["info"]:
+                info = placeholder["info"]
+            if not hostname and placeholder["hostname"]:
+                hostname = placeholder["hostname"]
+            conn.execute("DELETE FROM hosts WHERE mac=?", (placeholder["mac"],))
 
     _upsert_host_raw(conn, mac, ip, hostname, network, ports or [], info)
     conn.commit()
@@ -532,6 +580,14 @@ def get_state(key: str, default=None):
 
 def get_findings_summary(network_id: str = None) -> dict:
     """Get findings — optionally scoped to a network."""
+    # Track per-network "recon is exhausted" — set by the agent once ARP scan
+    # confirms a small/isolated network. Lets the planner advance to ENUMERATE
+    # even when live_hosts < 3 (otherwise the agent stays stuck in RECON
+    # forever on hostile guest WiFi where only the gateway is reachable).
+    recon_exhausted = False
+    if network_id:
+        exhausted_map = get_state("recon_exhausted_per_net", {})
+        recon_exhausted = bool(exhausted_map.get(network_id, False))
     return {
         "wifi_connected": get_state("wifi_connected", False),
         "live_hosts": get_host_count(network_id),
@@ -540,6 +596,7 @@ def get_findings_summary(network_id: str = None) -> dict:
         "vulnerabilities": get_vuln_count(network_id),
         "impact_documented": get_state("impact_documented", False),
         "cleanup_done": get_state("cleanup_done", False),
+        "recon_exhausted": recon_exhausted,
         "hosts": get_hosts(network_id),
         "creds": get_credentials(network_id),
         "vulns": get_vulnerabilities(network_id),

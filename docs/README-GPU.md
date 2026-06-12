@@ -12,11 +12,11 @@ GPU-accelerated local LLM inference on a rooted Android phone using OpenCL.
 
 | Model | Quant | GPU Prompt | GPU Generation | vs CPU |
 |-------|-------|------------|----------------|--------|
-| **Qwen3.5-0.8B** | Q8_0 | 30.5 t/s | **6.3 t/s** | +62% |
-| **Qwen3.5-2B** | Q8_0 | 23.3 t/s | **4.8 t/s** | +45% |
-| **Qwen3.5-4B** | Q4_0 | 10.1 t/s | **2.0 t/s** | GPU only |
+| **LFM2.5-1.2B-Instruct-Heretic** (production) | Q8_0 | 115 t/s | **13 t/s** | — |
+| Qwen3.5-0.8B | Q8_0 | 30.5 t/s | **6.3 t/s** | +62% |
+| Qwen3.5-4B | Q4_0 | 10.1 t/s | **2.0 t/s** | GPU only |
 
-*Generation = tokens per second when the model is "talking back." 4.8 t/s ≈ 4-5 words/sec.*
+*Generation = tokens per second when the model is "talking back." 13 t/s ≈ 10-13 words/sec.*
 
 ## How It Works
 
@@ -31,13 +31,13 @@ GPU-accelerated local LLM inference on a rooted Android phone using OpenCL.
 # SSH into the phone
 ssh -p 9022 shell@<phone-ip>
 
-# Run 2B model on GPU (best quality/speed balance)
+# Run LFM2.5-1.2B model on GPU (production — fastest + best balance)
 TERMUX_HOME=/data/data/com.termux/files/home
 su 10393 -c "export LD_LIBRARY_PATH=/vendor/lib64; \
   export GGML_OPENCL_PLATFORM=0; export GGML_OPENCL_DEVICE=0; \
   cd $TERMUX_HOME/llama.cpp/ggml/src/ggml-opencl/kernels; \
   $TERMUX_HOME/llama.cpp/build-fast/bin/llama-cli \
-  -m $TERMUX_HOME/models/Qwen3.5-2B-Q8_0.gguf \
+  -m $TERMUX_HOME/models/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf \
   -ngl 99 -c 512 -n 200 -no-cnv -p 'Your prompt'"
 ```
 
@@ -95,6 +95,10 @@ Mesa Turnip crashes with DeviceLostError during inference.
 
 ## The Journey (E031.37 → E031.50)
 
+This journey was measured on the legacy Qwen models (0.8B / 2B) while bringing
+up the GPU stack. The production model is now LFM2.5-1.2B-Instruct-Heretic
+(115 t/s prompt, 13 t/s generation on the final OpenCL Adreno + v819 stack).
+
 | Stage | 0.8B Gen | 2B Gen |
 |-------|----------|--------|
 | CPU only (ollama) | 2.2 t/s | 3.3 t/s |
@@ -119,9 +123,9 @@ cyberclaw/
 │   ├── magisk-adreno/           # GPU driver module info
 │   └── kali-env/                # Kali environment config
 └── models/                      # .gitignored (too large)
-    ├── Qwen3.5-0.8B-Q8_0.gguf
-    ├── Qwen3.5-2B-Q8_0.gguf
-    └── Qwen3.5-4B-Q4_0.gguf
+    ├── LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf   # production
+    ├── Qwen3.5-0.8B-Q8_0.gguf                    # legacy alt
+    └── Qwen3.5-4B-Q4_0.gguf                      # legacy alt
 ```
 
 ## After Reboot

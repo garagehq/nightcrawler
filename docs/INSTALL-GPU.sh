@@ -106,10 +106,11 @@ for model in "Qwen3.5-0.8B-Q8_0" "Qwen3.5-0.8B-Q4_0"; do
         echo "  ${model}: already exists"
     fi
 done
-if [ ! -f "Qwen3.5-2B-Q4_K_M.gguf" ]; then
-    echo "  Downloading Qwen3.5-2B-Q4_K_M..."
-    curl -L -o "Qwen3.5-2B-Q4_K_M.gguf" \
-        "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf" 2>&1 | tail -1
+# Production model: LFM2.5-1.2B-Instruct-Heretic (Heretic-abliterated, Liquid AI)
+if [ ! -f "LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf" ]; then
+    echo "  Downloading LFM2.5-1.2B-Instruct-Heretic Q8_0 (production model)..."
+    curl -L -o "LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf" \
+        "https://huggingface.co/mradermacher/LFM2.5-1.2B-Instruct-Heretic-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf" 2>&1 | tail -1
 fi
 echo "  Models downloaded"
 
@@ -158,7 +159,7 @@ echo "  cd ~/llama.cpp/ggml/src/ggml-opencl/kernels"
 echo "  GGML_OPENCL_PLATFORM=0 GGML_OPENCL_DEVICE=0 \\"
 echo "    LD_LIBRARY_PATH=/vendor/lib64 \\"
 echo "    ~/llama.cpp/build-generic/bin/llama-cli \\"
-echo "    -m ~/models/Qwen3.5-0.8B-Q8_0.gguf \\"
+echo "    -m ~/models/LFM2.5-1.2B-Instruct-Heretic.Q8_0.gguf \\"
 echo "    -ngl 99 -c 512 -n 100 -no-cnv -p 'Your prompt'"
 echo ""
 echo "============================================"
@@ -173,7 +174,7 @@ echo "  - Docs: /root/cyberclaw/docs/"
 echo ""
 echo "Termux (manual setup required):"
 echo "  - llama.cpp with OpenCL: see instructions above"
-echo "  - GPU inference: 4.6 t/s (0.8B), 1.8 t/s (2B)"
+echo "  - GPU inference: 13 t/s gen (LFM2.5-1.2B, production), 6.3 t/s (Qwen 0.8B alt)"
 echo ""
 echo "Magisk modules needed:"
 echo "  - openssh (SSH persistence)"
