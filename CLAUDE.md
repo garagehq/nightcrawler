@@ -447,7 +447,8 @@ All services auto-start after reboot. **Do NOT manually start services — wait 
 
 1. +10s: Android SSH (9022)
 2. +12s: Mount /vendor in Kali chroot
-3. +14s: Kali SSH (8022) with retry loop (10 attempts × 30s)
+3. +14s: Kali SSH (8022) — binds real /dev /proc /sys (+ devpts) into the chroot,
+   then starts sshd + a **persistent keepalive** loop that revives it if it dies
 4. +14s: SSH firewall (iptables: localhost + Tailscale only)
 5. +2min: **Early offline detection** — checks USB adapter + WiFi, creates pause files if needed, clears stale pause files from previous boot if online
 6. +3min: GPU governor daemon starts (forces performance mode, checks battery every 60s)
@@ -574,6 +575,17 @@ After ANY testing that creates data in the DB (test networks, test hosts, demo d
 - Never leave fake data (HomeWifi, ClientOffice, FF:EE:DD:CC:BB:AA, etc.) in production DB
 
 ## Known Issues
+- **Kali SSH (8022) dies unless /dev is bind-mounted (2026-07-11)**: `/data` is mounted
+  `nodev`, so a device node created on the chroot's `/dev` (e.g. `/dev/null`) does not
+  function. sshd's `daemon()` reopens stdio onto `/dev/null` and exits with
+  `daemon() failed: No such device` — port 8022 never comes up (foreground `sshd -D`
+  works because it skips `daemon()`). Something had also clobbered `kalifs/dev/null`
+  into a regular file (writes from `cmd >/dev/null` in the chroot). Fix: `service.sh`
+  now binds real `/dev /proc /sys` (+ devpts) into the chroot before starting sshd,
+  plus a persistent keepalive. **Guards are effect-based** (`[ -c dev/null ]`) not
+  `/proc/mounts` — Magisk's mount namespace does NOT surface these binds in `/proc/mounts`,
+  so a grep-based guard would re-mount forever. Manual restart from Android shell:
+  `ssh -p 9022 shell@127.0.0.1 '[ -c /data/local/nhsystem/kalifs/dev/null ] || mount --bind /dev /data/local/nhsystem/kalifs/dev; /system/bin/chroot /data/local/nhsystem/kalifs /usr/sbin/sshd'`
 - Q4_K_M on GPU: extremely slow (falls back to generic kernels)
 - 4B Q8_0: fails to load (exceeds 1GB per-allocation limit)
 - Vulkan: dead end (vendor=1.1, Mesa Turnip=DeviceLostError)

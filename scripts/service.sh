@@ -23,10 +23,30 @@ if [ -r ${START_SEMAPHOR} ] ; then
         echo "$(date) - Mounted /vendor"
     fi
     if [ -d "${CHROOT}" ]; then
+        # Kali sshd needs a real /dev inside the chroot. /data is mounted nodev, so a
+        # device node created on it (the chroot's /dev/null) does not function, and
+        # sshd's daemon() reopens stdio onto /dev/null and dies with
+        # "daemon() failed: No such device" — port 8022 then never comes up.
+        # Bind the real /dev /proc /sys (+ devpts) into the chroot. Guards are
+        # effect-based on purpose: /proc/mounts does NOT reflect these binds under
+        # Magisk's mount namespace, so a /proc/mounts grep would re-mount forever.
+        [ -c ${CHROOT}/dev/null ]     || mount --bind /dev  ${CHROOT}/dev
+        [ -e ${CHROOT}/dev/pts/ptmx ] || mount -t devpts devpts ${CHROOT}/dev/pts 2>/dev/null
+        [ -e ${CHROOT}/proc/self ]    || mount --bind /proc ${CHROOT}/proc
+        [ -e ${CHROOT}/sys/kernel ]   || mount --bind /sys  ${CHROOT}/sys
         mkdir -p ${CHROOT}/run/sshd; chmod 755 ${CHROOT}/run/sshd
         /system/bin/chroot ${CHROOT} /usr/sbin/sshd
         echo "$(date) - Kali sshd 8022: $?"
-        ( for _i in 1 2 3 4 5 6 7 8 9 10; do sleep 30; netstat -tlnp 2>/dev/null | grep -q ":8022 " || /system/bin/chroot ${CHROOT} /usr/sbin/sshd 2>/dev/null; done ) &
+        # Persistent keepalive: revive Kali sshd if it ever dies (OOM, scheduled
+        # restart, etc.), re-ensuring the /dev+devpts binds first, so port 8022 is
+        # always reachable. Runs in service.sh's mount namespace (binds visible).
+        ( while true; do
+            sleep 30
+            netstat -tlnp 2>/dev/null | grep -q ":8022 " && continue
+            [ -c ${CHROOT}/dev/null ]     || mount --bind /dev  ${CHROOT}/dev
+            [ -e ${CHROOT}/dev/pts/ptmx ] || mount -t devpts devpts ${CHROOT}/dev/pts 2>/dev/null
+            /system/bin/chroot ${CHROOT} /usr/sbin/sshd 2>/dev/null
+          done ) &
     fi
     echo "$(date) - SSH started (llama-server managed by watchdog_block.sh)"
 fi
