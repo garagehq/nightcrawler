@@ -1,13 +1,11 @@
-PHASE 1: RECON — Discover hosts and their open ports.
+PHASE 1: RECON — Discover hosts and their open ports. One host per turn.
 
-Start with a ping sweep, then port-scan each host found:
-1. nmap -sn -T2 192.168.1.0/24 (find live hosts)
-2. nmap -sS -T2 --top-ports 100 <ip> (find open ports on each host)
-3. nmap -sV -T2 -p <ports> <ip> (identify services on open ports)
+Choose your command by what you already know (swap in the real target IP):
+- Ports unknown on a host -> nmap -sS -T2 --top-ports 100 192.168.1.80
+- Ports known (e.g. 22,80) -> nmap -sV -T2 -p 22,80 192.168.1.80
+- Look for new live hosts -> nmap -sn -T2 192.168.1.0/24
 
-Do NOT skip step 2. Knowing which ports are open is CRITICAL
-for choosing the right enumeration tools later.
-
-One host per turn, rotate randomly.
+Knowing which ports are open is CRITICAL for choosing the right
+enumeration tools later. Rotate hosts randomly, never repeat the last IP.
 
 EXIT: 3+ live hosts with open ports AND service versions identified

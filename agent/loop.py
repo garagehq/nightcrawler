@@ -36,6 +36,29 @@ except ImportError:
 # broke on every other network the agent runs on.
 _IPV4_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
 
+# Tools the agent is allowed to launch. Used to recover a bare command when the
+# 1.2B model emits a valid command but drops the "COMMAND:" wrapper (its most
+# common format lapse). Downstream _is_valid_command() + scope proxy still gate
+# whatever this recovers, so recovery is safe.
+_KNOWN_TOOL_RE = re.compile(
+    r'^(?:sudo\s+)?('
+    r'nmap|curl|wget|dig|host|nslookup|smbclient|nxc|crackmapexec|gobuster|'
+    r'dirb|nikto|whatweb|wpscan|enum4linux|impacket-[\w-]+|redis-cli|sshpass|'
+    r'ssh|sqlmap|onesixtyone|snmpwalk|snmp-check|ftp|telnet|searchsploit|'
+    r'hydra|medusa|showmount|rpcclient|ldapsearch|nbtscan|arp-scan)\b'
+)
+
+
+def _clean_command_text(cmd: str) -> str:
+    """Strip markdown/code-fence/shell-prompt noise from a command line."""
+    cmd = re.sub(r'^```\w*\s*', '', cmd)
+    cmd = re.sub(r'\s*```$', '', cmd)
+    cmd = re.sub(r'^[`*]+', '', cmd)
+    cmd = re.sub(r'[`*]+$', '', cmd)
+    cmd = cmd.strip()
+    cmd = re.sub(r'^[#>$\s]+', '', cmd).strip()
+    return cmd
+
 
 class AgentLoop:
     """Main decision engine — calls LLM, executes commands through proxy."""
@@ -64,6 +87,11 @@ class AgentLoop:
         # the wrong host), so same-host rejections never accumulate via that
         # path. Track them independently and force a context reset at 3.
         self.same_host_streak = 0
+        # LFM2 often narrates intent ("I will rotate... execute now") with a
+        # REASONING line but no COMMAND. That is neither garbage nor a command,
+        # so without a dedicated counter it falls through the loop silently and
+        # snowballs into a no-command spiral. Track and break it.
+        self.no_command_streak = 0
         self.recent_commands = []  # last N commands for dup detection
         self.last_executed_ip = ""  # for same-host enforcement
         self.last_command_time = time.time()  # for time-based stuck detection
@@ -614,7 +642,44 @@ class AgentLoop:
                 reasoning = self._parse_reasoning(response)
                 command = self._parse_command(response)
 
-                # Always append the assistant response to context
+                # No command extracted: the model narrated intent (a REASONING
+                # line, "execute now", an analysis blurb) without issuing a
+                # command. This is neither garbage nor a command, so it must be
+                # handled explicitly — otherwise it falls through the loop
+                # silently, the narration is appended to context, and LFM2
+                # locks into a no-command spiral (observed: "Rotating to X...
+                # execute command now" repeated until the 5-min backstop). Nudge
+                # once, then reset with a few-shot; never append the narration.
+                if not command:
+                    self.no_command_streak += 1
+                    if reasoning:
+                        self.ui.render_agent_thought(reasoning)
+                    self.ui.render_warning(
+                        f"No command in output (streak {self.no_command_streak})")
+                    push_feed("warning", f"No command #{self.no_command_streak}")
+                    try:
+                        if structured_log:
+                            structured_log.log(
+                                "WARNING",
+                                f"No command (streak {self.no_command_streak})")
+                    except Exception:
+                        pass
+                    if self.no_command_streak >= 3:
+                        self._reset_context_with_fewshot()
+                        self.no_command_streak = 0
+                    else:
+                        self.context.append_user(
+                            "You replied without a command. Reply with EXACTLY "
+                            "two lines and nothing else:\n"
+                            "REASONING: [one short sentence]\n"
+                            "COMMAND: [one runnable command with a real IP, "
+                            "e.g. nmap -sV -T2 192.168.1.80]"
+                        )
+                    continue
+
+                # Command extracted — good turn. Reset the no-command counter
+                # and append the assistant response to context.
+                self.no_command_streak = 0
                 self.context.append_assistant(response)
 
                 if reasoning:
@@ -1818,9 +1883,15 @@ class AgentLoop:
             # Strip markdown bold markers
             text = text.strip("*").strip()
             return text if text else None
-        # If no REASONING tag, treat entire non-command text as reasoning
+        # If no REASONING tag and no command hidden in the text, treat the
+        # whole thing as reasoning. But if the text is really just a bare
+        # command (recovered by _parse_command's fallback), don't echo it as a
+        # thought too.
         if "COMMAND:" not in response.upper():
             text = response.strip()
+            if _KNOWN_TOOL_RE.match(_clean_command_text(text.splitlines()[0])
+                                    if text else ""):
+                return None
             return text if text else None
         return None
 
@@ -1828,17 +1899,15 @@ class AgentLoop:
     def _parse_command(response: str) -> str:
         match = re.search(r'COMMAND:\s*(.+)', response, re.IGNORECASE)
         if match:
-            cmd = match.group(1).strip()
-            # Strip markdown formatting: bold (**), code fences, backticks
-            cmd = re.sub(r'^```\w*\s*', '', cmd)
-            cmd = re.sub(r'\s*```$', '', cmd)
-            # Strip leading/trailing backticks and asterisks (markdown)
-            cmd = re.sub(r'^[`*]+', '', cmd)
-            cmd = re.sub(r'[`*]+$', '', cmd)
-            cmd = cmd.strip()
-            # Remove leading shell prompts, markdown headers
-            cmd = re.sub(r'^[#>$\s]+', '', cmd).strip()
+            cmd = _clean_command_text(match.group(1).strip())
             return cmd if cmd else None
+        # Fallback: the 1.2B model frequently emits a valid bare command with no
+        # "COMMAND:" wrapper (see prompts + CLAUDE.md model notes). Recover the
+        # first line that starts with a known tool so the turn isn't wasted.
+        for line in response.splitlines():
+            cand = _clean_command_text(line)
+            if _KNOWN_TOOL_RE.match(cand):
+                return cand
         return None
 
 
