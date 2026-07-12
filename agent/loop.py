@@ -1114,12 +1114,37 @@ class AgentLoop:
                     except Exception:
                         pass
 
-                    self.context.append_user(
-                        f"[LAST COMMAND]: {command}\n"
-                        f"[RESULT]: {output_summary}\n\n"
-                        f"{hint}{_fail_hints}"
-                        "REASONING: [text] COMMAND: [command]"
-                    )
+                    # Lead with the NEXT TARGET + suggested command, NOT the
+                    # last command. The 1.2B model echoes whatever IP/tool it
+                    # sees first: with "[LAST COMMAND]: nmap <prev-ip>" leading,
+                    # it re-ran nmap on the previous host (observed: one host hit
+                    # 41% of the time, ~100% nmap). Leading with the suggested
+                    # target + command makes it rotate hosts and match the tool
+                    # to the port (verified 3/3 vs 1/3 in a live A/B).
+                    if suggested:
+                        _sp = []
+                        for _h in all_hosts:
+                            if _h["ip"] == suggested:
+                                _sp = _h.get("ports", []) or []
+                                break
+                        _ports_str = (f" (open ports: {', '.join(map(str, _sp))})"
+                                      if _sp else "")
+                        self.context.append_user(
+                            f"[RESULT of last command]: {output_summary}\n\n"
+                            f"NEXT TARGET: {suggested}{_ports_str} — rotate to this host.\n"
+                            f"{hint}{_fail_hints}"
+                            f"Reply for {suggested} only:\n"
+                            f"REASONING: [one sentence]\n"
+                            f"COMMAND: [the suggested command above, or another "
+                            f"tool matched to {suggested}'s ports]"
+                        )
+                    else:
+                        self.context.append_user(
+                            f"[RESULT of last command]: {output_summary}\n\n"
+                            f"{hint}{_fail_hints}"
+                            "REASONING: [one sentence]\n"
+                            "COMMAND: [single command with a real IP]"
+                        )
                 else:
                     # No command produced — track streak
                     self.garbage_streak += 1
