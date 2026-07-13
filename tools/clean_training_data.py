@@ -64,20 +64,41 @@ def reject_reason(d, seen):
     return None
 
 
+def to_lfm2_text(system_prompt, messages, response):
+    """Render a full conversation in LFM2.5's chat template.
+
+    Verified against llama-server /apply-template: LFM2.5 uses ChatML markers
+    `<|im_start|>{role}\\n{content}<|im_end|>\\n`. The BOS token
+    `<|startoftext|>` is prepended by the tokenizer at train time, so it is NOT
+    embedded here (embedding it risks a double-BOS). The final assistant turn
+    keeps its trailing `<|im_end|>` so the model learns to stop.
+    """
+    out = []
+    if system_prompt:
+        out.append(f"<|im_start|>system\n{system_prompt}<|im_end|>\n")
+    for m in messages:
+        r = m.get("role", "user")
+        if r == "system":
+            continue
+        out.append(f"<|im_start|>{r}\n{m.get('content','')}<|im_end|>\n")
+    out.append(f"<|im_start|>assistant\n{response}<|im_end|>\n")
+    return "".join(out)
+
+
 def to_messages(d):
-    """Template-agnostic training record: system + prior turns + assistant target."""
+    """Training record: messages list (template-agnostic) + LFM2-formatted text."""
     msgs = []
     sp = d.get("system_prompt", "")
     if sp:
         msgs.append({"role": "system", "content": sp})
-    for m in d.get("messages", []):
-        r = m.get("role", "user")
-        if r == "system":
-            continue  # already added
-        msgs.append({"role": r, "content": m.get("content", "")})
-    msgs.append({"role": "assistant", "content": d.get("assistant_response", "")})
+    prior = [m for m in d.get("messages", []) if m.get("role") != "system"]
+    for m in prior:
+        msgs.append({"role": m.get("role", "user"), "content": m.get("content", "")})
+    resp = d.get("assistant_response", "")
+    msgs.append({"role": "assistant", "content": resp})
     return {
         "messages": msgs,
+        "text": to_lfm2_text(sp, prior, resp),
         "meta": {
             "command": d.get("command", ""),
             "phase": d.get("phase", ""),
