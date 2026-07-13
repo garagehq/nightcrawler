@@ -90,7 +90,14 @@ def capture_successful_interaction(
 
 
 def _to_chatml(system_prompt: str, messages: list, response: str) -> str:
-    """Convert to ChatML format for Qwen finetuning."""
+    """Convert to ChatML (`<|im_start|>`) format.
+
+    NOTE: this is Qwen-style ChatML and is NOT LFM2.5's chat template. It is
+    kept for the /api/training/export endpoint's backward compatibility. For an
+    LFM2-correct, deduped, quality-filtered finetuning set, build the dataset
+    with tools/clean_training_data.py (emits template-agnostic messages JSONL;
+    apply the model's own template at train time).
+    """
     parts = []
     if system_prompt:
         parts.append(f"<|im_start|>system\n{system_prompt}<|im_end|>")
