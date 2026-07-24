@@ -352,19 +352,14 @@ def ingest_findings(findings):
 
         if is_private and not is_target:
             subnet = ".".join(ip.split(".")[:3]) + ".0/24"
+            # Track observed foreign subnets as a recon breadcrumb ONLY — do NOT
+            # record them as vulnerabilities. A stray broadcast/multicast packet
+            # (mDNS/NBNS/DHCP/ARP) carrying an out-of-scope source IP does not
+            # establish reachability or any exposure; these devices are never
+            # even probed. Recording each one as a "high" finding produced false
+            # positives that dominated the vuln table (~83%) against phantom
+            # hosts. Foreign subnets are recon context, not findings.
             foreign_nets.add(subnet)
-            # Record as a vulnerability — foreign network reachable
-            try:
-                db.add_vulnerability(
-                    ip, "network",
-                    f"[RECON] Foreign network detected via passive capture: {subnet} "
-                    f"(seen {ftype} traffic from {ip}). "
-                    f"Possible dual-homed host or network bridge — investigate for pivot opportunities.",
-                    "high",
-                    chain=f"tcpdump passive capture → {ftype} packet from {ip} "
-                          f"(not in target scope)")
-            except Exception:
-                pass
 
         if not is_target:
             continue  # Don't add non-target hosts to the host DB
