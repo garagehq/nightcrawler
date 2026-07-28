@@ -90,16 +90,28 @@ def capture_successful_interaction(
 
 
 def _to_chatml(system_prompt: str, messages: list, response: str) -> str:
-    """Convert to ChatML format for Qwen finetuning."""
+    """Render the conversation in LFM2.5's chat template.
+
+    Verified byte-exact against llama-server /apply-template: LFM2.5 uses ChatML
+    markers `<|im_start|>{role}\\n{content}<|im_end|>\\n`. The BOS token
+    `<|startoftext|>` is prepended by the tokenizer at train time, so it is NOT
+    embedded here (embedding it risks a double-BOS). The final assistant turn
+    keeps its trailing `<|im_end|>` so the model learns to stop.
+
+    For a deduped, quality-filtered finetuning set, run
+    tools/clean_training_data.py (it emits both this text and a messages list).
+    """
     parts = []
     if system_prompt:
-        parts.append(f"<|im_start|>system\n{system_prompt}<|im_end|>")
+        parts.append(f"<|im_start|>system\n{system_prompt}<|im_end|>\n")
     for msg in messages:
         role = msg.get("role", "user")
+        if role == "system":
+            continue  # system already emitted; avoid a duplicate turn
         content = msg.get("content", "")
-        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
-    parts.append(f"<|im_start|>assistant\n{response}<|im_end|>")
-    return "\n".join(parts)
+        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
+    parts.append(f"<|im_start|>assistant\n{response}<|im_end|>\n")
+    return "".join(parts)
 
 
 def _check_rotation():
