@@ -435,9 +435,10 @@ def get_cred_count(network: str = None, network_id: str = None) -> int:
 
 def add_vulnerability(host: str, service: str, vuln: str,
                       severity: str = "medium", network: str = "",
-                      chain: str = ""):
+                      chain: str = "") -> bool:
     """Add a vulnerability. `chain` is the exploit path (commands that found it).
-    Auto-detects network from host IP if not provided."""
+    Auto-detects network from host IP if not provided.
+    Returns True if inserted, False if deduped against an existing finding."""
     conn = _get_conn()
     # Dedup: don't add same vuln for same host
     # Exact match OR first 40 chars match (handles variable response sizes)
@@ -445,7 +446,19 @@ def add_vulnerability(host: str, service: str, vuln: str,
         "SELECT id FROM vulnerabilities WHERE host=? AND (vuln=? OR substr(vuln,1,40)=substr(?,1,40))",
         (host, vuln, vuln)).fetchone()
     if existing:
-        return
+        return False
+    # CVE-aware dedup: if this vuln names a CVE, skip when the same CVE is
+    # already recorded for this host under ANY phrasing. Different detectors
+    # emit the same finding differently ("CVE: X" from output_parser vs
+    # "CVE found: X" from host_memory), whose first-40 chars differ and evade
+    # the check above — the cause of repeat CVEs in reports.
+    _cve = re.search(r'CVE-\d{4}-\d+', vuln or "", re.IGNORECASE)
+    if _cve:
+        dup = conn.execute(
+            "SELECT id FROM vulnerabilities WHERE host=? AND upper(vuln) LIKE ?",
+            (host, "%" + _cve.group(0).upper() + "%")).fetchone()
+        if dup:
+            return False
     # Auto-detect network from host if not provided
     if not network and host:
         row = conn.execute("SELECT network FROM hosts WHERE ip=?", (host,)).fetchone()
@@ -456,6 +469,7 @@ def add_vulnerability(host: str, service: str, vuln: str,
         (host, service, vuln, severity, network, _ts(), chain)
     )
     conn.commit()
+    return True
 
 
 def get_vulnerabilities(network: str = None, network_id: str = None) -> list:
