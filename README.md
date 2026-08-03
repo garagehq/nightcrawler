@@ -292,3 +292,11 @@ python3 -m pytest tests/
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
+
+## Support
+
+If you enjoy this project, you can buy me a coffee ☕:
+
+<a href="https://buymeacoffee.com/cyrilengmann" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210"></a>
+
+> **[buymeacoffee.com/cyrilengmann](https://buymeacoffee.com/cyrilengmann)**
