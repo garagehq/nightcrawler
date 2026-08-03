@@ -16,6 +16,10 @@ An autonomous penetration testing agent that runs entirely on a smartphone. Drop
 
 Nightcrawler automates this process on a phone. It uses a small AI model (LFM2.5-1.2B-Instruct-Heretic, 1.2 billion parameters) running locally on the phone's GPU to decide what to do next — which host to probe, which tool to use, what to look for. No internet connection or cloud API required.
 
+## Demo
+
+▶️ **[Watch Nightcrawler in action on Instagram](https://www.instagram.com/p/DYNXFvVN0c_/)**
+
 ### How it works
 
 1. **WiFi Breach** (optional) — If dropped without WiFi, it can autonomously crack WPA2 networks using an external USB WiFi adapter
