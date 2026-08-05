@@ -871,6 +871,7 @@
             <button id="kill-btn" onclick="killSwitch()">&#9940; KILL</button>
             <button onclick="generateReport()" style="border-color:#0af;color:#0af">&#128196; REPORT</button>
             <button onclick="toggleOfflineMode()" style="border-color:#ffaa00;color:#ffaa00" id="offline-toggle-btn">&#128225; OFFLINE</button>
+            <button onclick="toggleWifi()" style="border-color:#0af;color:#0af" id="wifi-btn">&#128246; WIFI</button>
             <span style="margin-left:12px;border-left:1px solid var(--border);padding-left:8px;">
                 <label style="color:var(--text-dim);font-size:10px;margin-right:4px;">COVER</label>
                 <input type="range" id="cover-slider" min="0" max="100" value="0" style="width:min(80px,20vw);vertical-align:middle;" oninput="updateCoverLabel()" onchange="setCoverTraffic()">
@@ -1188,6 +1189,39 @@
             </div>
         </div>
 
+        <!-- Wi-Fi one-tap connect (open + your saved private networks) -->
+        <div class="config-overlay" id="wifi-overlay" onclick="if(event.target===this)toggleWifi()">
+            <div class="config-panel" style="border-color:#0af;min-width:min(420px,92vw);">
+                <h3 style="color:#0af;">&#128246; WI-FI CONNECT</h3>
+                <div style="color:var(--text-dim);font-size:10px;margin-bottom:8px;">
+                    Joins open networks and private networks you've saved a password for.
+                    Locked networks you haven't saved are shown but not connectable &mdash;
+                    this never cracks passwords.
+                </div>
+                <div id="wifi-status-line" style="font-size:11px;padding:6px 8px;border:1px solid var(--border);background:var(--bg-panel);margin-bottom:8px;color:var(--text-dim);">Not scanned yet.</div>
+                <div style="text-align:right;margin-bottom:6px;">
+                    <button onclick="wifiScan()" id="wifi-scan-btn" style="border-color:#0af;color:#0af;">&#9654; SCAN</button>
+                </div>
+                <div id="wifi-net-list" style="max-height:34vh;overflow-y:auto;border:1px solid var(--border);"></div>
+
+                <div style="border-top:1px solid var(--border);margin:12px 0 6px;padding-top:10px;">
+                    <h4 style="color:var(--cyan);margin:0 0 8px;font-size:12px;">MY SAVED NETWORKS</h4>
+                    <div id="wifi-saved-list" style="font-size:11px;margin-bottom:8px;"></div>
+                    <div class="config-row" style="border:0;padding:2px 0;">
+                        <input type="text" id="wifi-add-ssid" placeholder="SSID (network name)" style="width:38%;">
+                        <input type="password" id="wifi-add-psk" placeholder="password" style="width:30%;">
+                        <label style="font-size:10px;">hidden <input type="checkbox" id="wifi-add-hidden"></label>
+                        <button onclick="wifiAddSaved()" style="border-color:var(--cyan);color:var(--cyan);">ADD</button>
+                    </div>
+                    <div style="color:var(--text-dim);font-size:10px;margin-top:4px;">Only add networks you're allowed to use (home, office, your hotspot).</div>
+                </div>
+
+                <div style="text-align:right;margin-top:10px;">
+                    <button class="close-btn" onclick="toggleWifi()">CLOSE</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Network Info (hidden, used by JS) -->
         <div id="net-info-data" style="display:none"></div>
     </div>
@@ -1378,6 +1412,112 @@
             const overlay = document.getElementById('config-overlay');
             overlay.classList.toggle('visible');
             if (overlay.classList.contains('visible')) loadOperatingHours();
+        }
+
+        // ── Wi-Fi one-tap connect (open + saved private networks) ──
+        function toggleWifi() {
+            const overlay = document.getElementById('wifi-overlay');
+            overlay.classList.toggle('visible');
+            if (overlay.classList.contains('visible')) { wifiLoadSaved(); wifiScan(); }
+        }
+
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g,
+                c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        async function wifiScan() {
+            const list = document.getElementById('wifi-net-list');
+            list.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px;">Scanning...</div>';
+            try {
+                const r = await fetch('/api/wifi/scan');
+                const nets = (await r.json()).networks || [];
+                if (!nets.length) { list.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px;">No networks found.</div>'; return; }
+                list.innerHTML = nets.map(n => {
+                    const bars = n.signal ? `${n.signal} dBm` : '';
+                    let badge, action;
+                    if (n.hidden) {
+                        badge = '<span style="color:#888;">hidden</span>';
+                        action = '<span style="color:#666;font-size:10px;">not connectable</span>';
+                    } else if (n.open) {
+                        badge = '<span style="color:#0f0;">open</span>';
+                        action = `<button style="border-color:#0f0;color:#0f0;font-size:10px;padding:2px 8px;" onclick="wifiConnect('${esc(n.ssid)}')">CONNECT</button>`;
+                    } else if (n.saved) {
+                        badge = '<span style="color:#0af;">saved</span>';
+                        action = `<button style="border-color:#0af;color:#0af;font-size:10px;padding:2px 8px;" onclick="wifiConnect('${esc(n.ssid)}')">CONNECT</button>`;
+                    } else {
+                        badge = '<span style="color:#fa0;">locked</span>';
+                        action = '<span style="color:#888;font-size:10px;">save password to connect</span>';
+                    }
+                    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;">
+                        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(n.ssid)} <span style="color:var(--text-dim);font-size:9px;">${badge} ${bars}</span></span>
+                        ${action}</div>`;
+                }).join('');
+            } catch (e) {
+                list.innerHTML = `<div style="padding:8px;color:#f55;font-size:11px;">Scan failed: ${esc(e.message)}</div>`;
+            }
+        }
+
+        async function wifiConnect(ssid) {
+            const sl = document.getElementById('wifi-status-line');
+            sl.style.color = 'var(--text-dim)';
+            sl.textContent = `Connecting to ${ssid}...`;
+            try {
+                const r = await fetch('/api/wifi/connect', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ssid})});
+                const res = await r.json();
+                if (res.ok) {
+                    if (res.portal) {
+                        sl.style.color = '#fa0';
+                        sl.textContent = `Connected to ${ssid} — captive portal detected. Open a browser and tap through the portal to finish.`;
+                    } else {
+                        sl.style.color = '#0f0';
+                        sl.textContent = `Connected to ${ssid}${res.ip ? ' ('+res.ip+')' : ''} — internet OK.`;
+                    }
+                } else {
+                    sl.style.color = '#f55';
+                    sl.textContent = res.error || 'Connect failed.';
+                }
+            } catch (e) {
+                sl.style.color = '#f55';
+                sl.textContent = 'Connect failed: ' + e.message;
+            }
+        }
+
+        async function wifiLoadSaved() {
+            const box = document.getElementById('wifi-saved-list');
+            try {
+                const r = await fetch('/api/wifi/saved');
+                const saved = (await r.json()).saved || [];
+                box.innerHTML = saved.length ? saved.map(n =>
+                    `<div style="display:flex;justify-content:space-between;padding:3px 0;">
+                        <span>${esc(n.ssid)}${n.hidden ? ' <span style="color:#888;font-size:9px;">(hidden)</span>' : ''}</span>
+                        <button style="border-color:#f55;color:#f55;font-size:10px;padding:1px 6px;" onclick="wifiRemoveSaved('${esc(n.ssid)}')">&times;</button>
+                    </div>`).join('')
+                    : '<div style="color:var(--text-dim);">None saved yet.</div>';
+            } catch (e) { box.innerHTML = '<div style="color:#f55;">Failed to load.</div>'; }
+        }
+
+        async function wifiAddSaved() {
+            const ssid = document.getElementById('wifi-add-ssid').value.trim();
+            const psk = document.getElementById('wifi-add-psk').value;
+            const hidden = document.getElementById('wifi-add-hidden').checked;
+            if (!ssid || !psk) { alert('Enter both an SSID and its password.'); return; }
+            await fetch('/api/wifi/saved', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ssid, psk, hidden})});
+            document.getElementById('wifi-add-ssid').value = '';
+            document.getElementById('wifi-add-psk').value = '';
+            document.getElementById('wifi-add-hidden').checked = false;
+            wifiLoadSaved(); wifiScan();
+        }
+
+        async function wifiRemoveSaved(ssid) {
+            await fetch('/api/wifi/saved', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: 'remove', ssid})});
+            wifiLoadSaved(); wifiScan();
         }
 
         async function saveConfig() {
