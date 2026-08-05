@@ -52,7 +52,10 @@ def reject_reason(d, seen):
         return "tiny_output"
     if REPEAT_FLAG.search(cmd) or cmd.count("-sZ") >= 2:
         return "malformed_flags"
-    if cmd.startswith("nmap") and not NMAP_STEALTH.search(cmd):
+    # Match nmap as the tool even under "sudo " (the agent's bare-command
+    # recovery can emit `sudo nmap ...`). startswith("nmap") let those
+    # commands bypass the stealth filter entirely.
+    if re.search(r"(?:^|\s)(?:sudo\s+)?nmap\b", cmd) and not NMAP_STEALTH.search(cmd):
         return "loud_nmap"
     # Cap per unique command (normalized). Output-based dedup fails because nmap
     # output embeds a timestamp; command-level capping is what curbs the real
