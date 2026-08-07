@@ -1805,6 +1805,56 @@ def api_offline_adapter():
     })
 
 
+# ── Wi-Fi one-tap connect (open + operator-saved private networks) ─────────
+# Convenience layer: connect the phone to open networks or private networks the
+# operator saved a password for. NEVER cracks — a locked network with no saved
+# password is not joinable. Separate from the offline monitor-mode pipeline.
+
+@app.route("/api/wifi/scan")
+def api_wifi_scan():
+    from agent import wifi_connect
+    return jsonify({"networks": wifi_connect.scan_available()})
+
+
+@app.route("/api/wifi/status")
+def api_wifi_status():
+    from agent import wifi_connect
+    return jsonify(wifi_connect.get_status())
+
+
+@app.route("/api/wifi/connect", methods=["POST"])
+def api_wifi_connect():
+    from agent import wifi_connect
+    data = request.get_json(force=True) or {}
+    return jsonify(wifi_connect.connect_to(data.get("ssid", "")))
+
+
+@app.route("/api/wifi/saved", methods=["GET", "POST"])
+def api_wifi_saved():
+    """List/add/remove the operator's own saved networks.
+
+    GET never returns stored passwords — only SSID + hidden flag.
+    """
+    from agent import wifi_connect
+    if request.method == "GET":
+        return jsonify({"saved": [{"ssid": n["ssid"], "hidden": n.get("hidden", False)}
+                                  for n in wifi_connect.list_saved()]})
+    data = request.get_json(force=True) or {}
+    if data.get("action") == "remove":
+        return jsonify(wifi_connect.remove_saved(data.get("ssid", "")))
+    return jsonify(wifi_connect.add_saved(
+        data.get("ssid", ""), data.get("psk", ""), data.get("hidden", False)))
+
+
+@app.route("/api/wifi/simulate", methods=["POST"])
+def api_wifi_simulate():
+    """Enable/disable Wi-Fi connect simulation mode (testing only)."""
+    from agent import wifi_connect
+    data = request.get_json(force=True) or {}
+    wifi_connect.SIMULATE = bool(data.get("enabled", True))
+    return jsonify({"ok": True, "simulate": wifi_connect.SIMULATE})
+
+
 def _get_remediation(service: str, vuln: str) -> str:
     """Generate remediation advice based on the finding."""
     v_lower = vuln.lower()
