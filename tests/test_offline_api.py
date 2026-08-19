@@ -17,7 +17,7 @@ BASE = "https://127.0.0.1:8888"
 RESULTS = {"passed": 0, "failed": 0, "errors": []}
 
 
-def test(name, condition, detail=""):
+def _check(name, condition, detail=""):
     if condition:
         RESULTS["passed"] += 1
         print(f"  PASS: {name}")

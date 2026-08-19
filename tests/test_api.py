@@ -183,10 +183,16 @@ class TestCommandSearch:
         resp = test_client.get("/api/commands/search?q=nmap")
         assert resp.status_code == 200
         data = resp.get_json()
-        assert isinstance(data, list)
+        assert isinstance(data, dict)
+        assert "commands" in data or "timeline" in data
+        total = len(data.get("commands", [])) + len(data.get("timeline", []))
+        assert total >= 1
 
     def test_search_empty(self, test_client):
-        resp = test_client.get("/api/commands/search?q=nonexistent_xyz")
+        resp = test_client.get("/api/commands/search?q=nonexistent_xyz_987654321")
         assert resp.status_code == 200
         data = resp.get_json()
-        assert len(data) == 0
+        assert isinstance(data, dict)
+        # Empty search should return empty arrays (no matches)
+        assert len(data.get("commands", [])) == 0
+        assert len(data.get("timeline", [])) == 0
