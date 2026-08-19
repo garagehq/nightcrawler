@@ -1,3 +1,313 @@
+<<<<<<< Updated upstream
+=======
+# Pipeline Context (AGENTS.md)
+
+# AGENTS.md — Pipeline Context for nightcrawler
+
+## Project Overview
+Autonomous mobile penetration testing agent running on smartphones with local AI inference and web dashboard.
+
+**Repository**: `garagehq/nightcrawler`
+**Language**: python
+**Framework**: flask
+**Subtype**: python_web
+**Docker Image**: `python:3.12-slim` — use this for all testing
+
+
+## Build & Run
+- **Install deps**: `pip install  pytest 2>&1 | tail -3; pip install  flask httpx pyyaml requests 2>&1 | tail -5 || true`
+
+
+## Testing
+- **Has existing tests**: yes
+- **Test directory**: `tests/`
+- **Test framework**: pytest
+- **Test command**: `pytest`
+- **Pipeline test runner**: `pytest`
+- **Testable components** (partial scope): agent.output_parser, agent.cve_db, agent.structured_log, agent.offline_manager, kali_executor, webui.server, config_loader
+
+
+## File Structure
+**Source files:**
+- `main.py`
+- `scripts/generate-report.py`
+- `webui/server.py`
+- `webui/__init__.py`
+- `simulation/__init__.py`
+- `simulation/runner.py`
+- `agent/loop.py`
+- `agent/net_detect.py`
+- `agent/report_generator.py`
+- `agent/structured_log.py`
+- `agent/context.py`
+- `agent/mission_log.py`
+- `agent/llm_client.py`
+- `agent/__init__.py`
+- `agent/watchdog.py`
+- `agent/output_parser.py`
+- `agent/cover_traffic.py`
+- `agent/host_memory.py`
+- `agent/planner.py`
+- `agent/attack_planner.py`
+**Test files:**
+- `simulation/mock_kali_server.py`
+
+
+## Key Source Code
+Snippets from main source files (first 40 lines each):
+```
+
+--- main.py ---
+#!/usr/bin/env python3
+"""Nightcrawler — Mobile Autonomous Pentest Agent entry point."""
+
+import asyncio
+import os
+import signal
+import subprocess
+import sys
+import yaml
+
+
+def _kill_existing_agents():
+    """Kill any other main.py instances to prevent duplicate agents."""
+    my_pid = os.getpid()
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "python3 main.py"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.strip().split("\n"):
+            pid = int(line.strip()) if line.strip() else 0
+            if pid and pid != my_pid:
+                os.kill(pid, signal.SIGKILL)
+    except Exception:
+        pass
+
+from agent.llm_client import LLMClient
+from agent.loop import AgentLoop
+from agent.planner import Phase
+from ui.colors import C
+from ui.terminal import TerminalUI
+
+
+def check_network_connectivity() -> bool:
+    """Check if we already have network connectivity."""
+    # Method 1: default route
+    try:
+        result = subprocess.run(
+            ["ip", "route", "show", "default"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.stdout.strip():
+            return True
+    except Exception:
+        pass
+
+    # Method 2: check if wlan0 has an IP
+    try:
+        result = subprocess.run(
+            ["ip", "addr", "show", "wlan0"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if "inet " in result.stdout:
+            return True
+    except Exception:
+        pass
+
+    # Method 3: can we reach the LLM? (shared network namespace)
+    try:
+        import httpx
+        r = httpx.get("http://127.0.0.1:8080/health", timeout=3)
+        if r.status_code == 200:
+            return True
+    except Exception:
+        pass
+
+    # Method 4: can we ping the gateway?
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", "192.168.1.1"],
+            capture_output=True, text=True, timeout=5,
+        )
+    
+```
+
+
+## CI Gotchas
+(none yet — will be populated if CI fails)
+
+
+## Pipeline History
+- *2026-08-19* — Scout: python/flask, scope=partial
+
+- *2026-08-19* — Implement: Here'\''\'\'''\''s a summary of what was accomplished:
+
+## Summary
+
+### Tests Passed: 75/75 (100%)
+
+### Changes 
+
+## Known Issues
+(none yet)
+
+
+## Notes
+- This file is auto-read by Qwen Code as project context (like CLAUDE.md)
+- Updated by each pipeline phase with learnings, CI fixes, and gotchas
+- DO NOT delete this file — it helps the pipeline avoid repeating mistakes
+
+
+---
+
+# Pipeline Context (AGENTS.md)
+
+# AGENTS.md — Pipeline Context for nightcrawler
+
+## Project Overview
+Autonomous mobile penetration testing agent running on smartphones with local AI inference and web dashboard.
+
+**Repository**: `garagehq/nightcrawler`
+**Language**: python
+**Framework**: flask
+**Subtype**: python_web
+**Docker Image**: `python:3.12-slim` — use this for all testing
+
+## Build & Run
+- **Install deps**: `pip install  pytest 2>&1 | tail -3; pip install  flask httpx pyyaml requests 2>&1 | tail -5 || true`
+
+## Testing
+- **Has existing tests**: yes
+- **Test directory**: `tests/`
+- **Test framework**: pytest
+- **Test command**: `pytest`
+- **Pipeline test runner**: `pytest`
+- **Testable components** (partial scope): agent.output_parser, agent.cve_db, agent.structured_log, agent.offline_manager, kali_executor, webui.server, config_loader
+
+## File Structure
+**Source files:**
+- `main.py`
+- `scripts/generate-report.py`
+- `webui/server.py`
+- `webui/__init__.py`
+- `simulation/__init__.py`
+- `simulation/runner.py`
+- `agent/loop.py`
+- `agent/net_detect.py`
+- `agent/report_generator.py`
+- `agent/structured_log.py`
+- `agent/context.py`
+- `agent/mission_log.py`
+- `agent/llm_client.py`
+- `agent/__init__.py`
+- `agent/watchdog.py`
+- `agent/output_parser.py`
+- `agent/cover_traffic.py`
+- `agent/host_memory.py`
+- `agent/planner.py`
+- `agent/attack_planner.py`
+**Test files:**
+- `simulation/mock_kali_server.py`
+
+## Key Source Code
+Snippets from main source files (first 40 lines each):
+```
+
+--- main.py ---
+#!/usr/bin/env python3
+"""Nightcrawler — Mobile Autonomous Pentest Agent entry point."""
+
+import asyncio
+import os
+import signal
+import subprocess
+import sys
+import yaml
+
+
+def _kill_existing_agents():
+    """Kill any other main.py instances to prevent duplicate agents."""
+    my_pid = os.getpid()
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "python3 main.py"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.strip().split("\n"):
+            pid = int(line.strip()) if line.strip() else 0
+            if pid and pid != my_pid:
+                os.kill(pid, signal.SIGKILL)
+    except Exception:
+        pass
+
+from agent.llm_client import LLMClient
+from agent.loop import AgentLoop
+from agent.planner import Phase
+from ui.colors import C
+from ui.terminal import TerminalUI
+
+
+def check_network_connectivity() -> bool:
+    """Check if we already have network connectivity."""
+    # Method 1: default route
+    try:
+        result = subprocess.run(
+            ["ip", "route", "show", "default"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.stdout.strip():
+            return True
+    except Exception:
+        pass
+
+    # Method 2: check if wlan0 has an IP
+    try:
+        result = subprocess.run(
+            ["ip", "addr", "show", "wlan0"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if "inet " in result.stdout:
+            return True
+    except Exception:
+        pass
+
+    # Method 3: can we reach the LLM? (shared network namespace)
+    try:
+        import httpx
+        r = httpx.get("http://127.0.0.1:8080/health", timeout=3)
+        if r.status_code == 200:
+            return True
+    except Exception:
+        pass
+
+    # Method 4: can we ping the gateway?
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", "192.168.1.1"],
+            capture_output=True, text=True, timeout=5,
+        )
+    
+```
+
+## CI Gotchas
+(none yet — will be populated if CI fails)
+
+## Pipeline History
+- *2026-08-19* — Scout: python/flask, scope=partial
+
+## Known Issues
+(none yet)
+
+## Notes
+- This file is auto-read by Qwen Code as project context (like CLAUDE.md)
+- Updated by each pipeline phase with learnings, CI fixes, and gotchas
+- DO NOT delete this file — it helps the pipeline avoid repeating mistakes
+
+
+---
+
+>>>>>>> Stashed changes
 # Nightcrawler - Mobile Autonomous Pentest Agent
 
 ## Project
@@ -44,13 +354,21 @@ The phone has two separate execution environments sharing the same kernel + netw
 | GPU binaries | **CANNOT run** (bionic-linked) | llama-server, OpenCL |
 
 **Key rules:**
+<<<<<<< Updated upstream
 - Binaries from one world can't run in the other (glibc vs bionic)
+=======
+- Binaries from one world can'\''\'\'''\''t run in the other (glibc vs bionic)
+>>>>>>> Stashed changes
 - **Only way to execute Android-side from Kali**: `ssh -p 9022 shell@127.0.0.1 "command"`
 - `nsenter` does NOT work — SSH is the only bridge
 - `/vendor` must be mounted in chroot for OpenCL libs (`ls /vendor/lib64/libOpenCL.so`)
 - `/data` is shared — Kali can see Termux files at `/data/data/com.termux/files/home/`
 - Port 9022 dies first under OOM (Android sshd is heavier). Port 22 (Kali) usually survives
+<<<<<<< Updated upstream
 - If 9022 is down but 22 is up: can kill processes from Kali but can't start Android-side processes
+=======
+- If 9022 is down but 22 is up: can kill processes from Kali but can'\''\'\'''\''t start Android-side processes
+>>>>>>> Stashed changes
 - Emergency reboot when Android SSH is dead: `echo b > /proc/sysrq-trigger`
 - RAM budget: llama-server ~3.2GB + Android ~3-4GB = ~7GB used, leaving ~4-5GB for agent + tools
 
@@ -181,7 +499,11 @@ On startup, the agent auto-blacklists all `excluded_hosts` from config.yaml
 (gateway + self IP) with a `self-` MAC prefix. These show on the web UI as
 blacklisted and are included in Thor exports. This prevents the agent from
 scanning its own kali-mcp-server or the gateway — critical when Thor is in
+<<<<<<< Updated upstream
 the pipeline so it doesn't red-team itself.
+=======
+the pipeline so it doesn'\''\'\'''\''t red-team itself.
+>>>>>>> Stashed changes
 
 ## C2 Interactive Features (Web UI)
 The web UI at `:8888` has full C2 controls:
@@ -301,7 +623,11 @@ Fix code if needed, restart service, append to finetuning log.
 - **Garbage detection** with 5-streak context reset prevents model spiral (all rejection paths, including validation)
 - **Varied reset examples**: port-matched SSH/DNS/HTTP/nmap examples prevent tool fixation
 - **Direct playbook execution**: bypass the LLM for multi-step attack chains — the 1.2B model generates similar-but-wrong commands instead of following steps exactly
+<<<<<<< Updated upstream
 - **Let commands fail naturally**: don't silently reject — real error feedback teaches the model
+=======
+- **Let commands fail naturally**: don'\''\'\'''\''t silently reject — real error feedback teaches the model
+>>>>>>> Stashed changes
 - **Duplicate command detection** forces tool/target diversification
 - **Patient host rotation** — spread activity across network, one action per host per turn
 - **Same-host enforcement** — rejects commands targeting the same IP as the previous turn
@@ -375,14 +701,24 @@ Commands pass through 5 validation gates before execution:
 
 All rejection paths increment `garbage_streak`. At streak 5, a shared
 `_reset_context_with_fewshot()` fires — clears context, injects a
+<<<<<<< Updated upstream
 **port-matched example** (SSH/DNS/HTTP/nmap variants based on target host's actual ports)
+=======
+**port-matched example** (SSH/DNS/HTTP/nmap variants based on target host'\''\'\'''\''s actual ports)
+>>>>>>> Stashed changes
 on a random host, clears dedup window + last IP.
 Time-based stuck detection (5min) is a backstop that catches any stuck
 pattern regardless of which gate is involved.
 
+<<<<<<< Updated upstream
 **Key lesson (2026-03-22)**: Don't silently reject commands from the 1.2B model.
 The smbclient port validation (rejecting smbclient on hosts without port 445)
 caused an infinite rejection loop — the model couldn't learn from silent rejections
+=======
+**Key lesson (2026-03-22)**: Don'\''\'\'''\''t silently reject commands from the 1.2B model.
+The smbclient port validation (rejecting smbclient on hosts without port 445)
+caused an infinite rejection loop — the model couldn'\''\'\'''\''t learn from silent rejections
+>>>>>>> Stashed changes
 and kept regenerating the same command. Letting commands fail naturally through
 the executor gives the model real feedback ("Connection refused") and it adapts.
 Silent rejection loops are worse than wasted turns.
@@ -391,12 +727,20 @@ Silent rejection loops are worse than wasted turns.
 - **Heretic-abliterated** — no safety refusals (verified: complies with port scans, SMB enum, credential attacks, web probes), no re-prompting needed
 - ~50% command success rate (inherent limit of 1.2B parameters)
 - Produces garbage/number sequences ~25% of turns
+<<<<<<< Updated upstream
 - **Format compliance**: zero-shot format compliance is weak (echoes placeholders, garbled syntax), but GOOD with few-shot prompting — the agent's actual prompting style produces clean "REASONING:/COMMAND:" output
+=======
+- **Format compliance**: zero-shot format compliance is weak (echoes placeholders, garbled syntax), but GOOD with few-shot prompting — the agent'\''\'\'''\''s actual prompting style produces clean "REASONING:/COMMAND:" output
+>>>>>>> Stashed changes
 - Follows few-shot examples more than system prompt instructions (even more true for this 1.2B model than for the old 2B)
 - Smaller than the old 2B model but ~2.6x faster generation (13 vs 4.8 t/s), so more retries/throughput offset any per-response quality difference
 - **Stuck loops**: model fixates on reasoning (e.g., "SSH open, SMB open") without producing COMMAND — or repeats the same command. Fixed with 5-streak reset + 5min time-based backstop.
 - **Tool fixation**: model learns "exploit = smbclient" and generates smbclient for ALL hosts regardless of open ports. Silent command rejection makes this WORSE (infinite loop). Solution: let commands fail naturally + varied port-matched reset examples.
+<<<<<<< Updated upstream
 - **Can't follow multi-step playbooks**: model generates similar-but-wrong commands instead of exact playbook steps. Solution: direct playbook execution bypassing LLM entirely.
+=======
+- **Can'\''\'\'''\''t follow multi-step playbooks**: model generates similar-but-wrong commands instead of exact playbook steps. Solution: direct playbook execution bypassing LLM entirely.
+>>>>>>> Stashed changes
 - Verbose reasoning eats tokens — "10 words max" in system prompt helps
 - Temperature 0.2 gives best format compliance
 - max_tokens 200 balances completeness vs garbage
@@ -419,7 +763,11 @@ Silent rejection loops are worse than wasted turns.
 
 ## Per-Network Feed & Pagination
 - Feed entries tagged with `network_id` when created via `push_feed()`
+<<<<<<< Updated upstream
 - Switching networks shows only that network's feed entries
+=======
+- Switching networks shows only that network'\''\'\'''\''s feed entries
+>>>>>>> Stashed changes
 - Displays last 200 entries, count shows "200+" when more exist
 - Reverse pagination: scrolling to top loads 100 more older entries
 - Network deletion clears feed entries for that network
@@ -487,7 +835,11 @@ auto-detect the adapter, load the driver (8821cu/8188eu), and enter offline mode
 
 ## Agent Watchdog (`scripts/agent-watchdog.sh`)
 - Monitors agent log file modification time every 60s
+<<<<<<< Updated upstream
 - If log hasn't been updated in 40 min → agent is hung → kills and restarts
+=======
+- If log hasn'\''\'\'''\''t been updated in 40 min → agent is hung → kills and restarts
+>>>>>>> Stashed changes
 - Also restarts if agent process is not running at all
 - Runs as a separate process alongside the agent (not inside it)
 - Logs to `/tmp/nc-agent-watchdog.log`
@@ -568,24 +920,42 @@ server.py changes: `bash scripts/webui-daemon.sh restart`
 
 ## IMPORTANT: Clean Up Test Artifacts
 After ANY testing that creates data in the DB (test networks, test hosts, demo data):
+<<<<<<< Updated upstream
 - **Delete test networks**: `DELETE FROM networks WHERE network_id NOT IN ('<real_id>')`
 - **Delete test hosts**: `DELETE FROM hosts WHERE network NOT IN (SELECT network_id FROM networks)`
 - **Delete test memories**: Check `host_memories` state for test MAC addresses
 - **Verify**: `python3 -c "from agent.db import *; init_db('logs'); print(get_networks()); print(len(get_hosts()))"`
+=======
+- **Delete test networks**: `DELETE FROM networks WHERE network_id NOT IN ('\''\'\'''\''<real_id>'\''\'\'''\'')`
+- **Delete test hosts**: `DELETE FROM hosts WHERE network NOT IN (SELECT network_id FROM networks)`
+- **Delete test memories**: Check `host_memories` state for test MAC addresses
+- **Verify**: `python3 -c "from agent.db import *; init_db('\''\'\'''\''logs'\''\'\'''\''); print(get_networks()); print(len(get_hosts()))"`
+>>>>>>> Stashed changes
 - Never leave fake data (HomeWifi, ClientOffice, FF:EE:DD:CC:BB:AA, etc.) in production DB
 
 ## Known Issues
 - **Kali SSH (8022) dies unless /dev is bind-mounted (2026-07-11)**: `/data` is mounted
+<<<<<<< Updated upstream
   `nodev`, so a device node created on the chroot's `/dev` (e.g. `/dev/null`) does not
   function. sshd's `daemon()` reopens stdio onto `/dev/null` and exits with
+=======
+  `nodev`, so a device node created on the chroot'\''\'\'''\''s `/dev` (e.g. `/dev/null`) does not
+  function. sshd'\''\'\'''\''s `daemon()` reopens stdio onto `/dev/null` and exits with
+>>>>>>> Stashed changes
   `daemon() failed: No such device` — port 8022 never comes up (foreground `sshd -D`
   works because it skips `daemon()`). Something had also clobbered `kalifs/dev/null`
   into a regular file (writes from `cmd >/dev/null` in the chroot). Fix: `service.sh`
   now binds real `/dev /proc /sys` (+ devpts) into the chroot before starting sshd,
   plus a persistent keepalive. **Guards are effect-based** (`[ -c dev/null ]`) not
+<<<<<<< Updated upstream
   `/proc/mounts` — Magisk's mount namespace does NOT surface these binds in `/proc/mounts`,
   so a grep-based guard would re-mount forever. Manual restart from Android shell:
   `ssh -p 9022 shell@127.0.0.1 '[ -c /data/local/nhsystem/kalifs/dev/null ] || mount --bind /dev /data/local/nhsystem/kalifs/dev; /system/bin/chroot /data/local/nhsystem/kalifs /usr/sbin/sshd'`
+=======
+  `/proc/mounts` — Magisk'\''\'\'''\''s mount namespace does NOT surface these binds in `/proc/mounts`,
+  so a grep-based guard would re-mount forever. Manual restart from Android shell:
+  `ssh -p 9022 shell@127.0.0.1 '\''\'\'''\''[ -c /data/local/nhsystem/kalifs/dev/null ] || mount --bind /dev /data/local/nhsystem/kalifs/dev; /system/bin/chroot /data/local/nhsystem/kalifs /usr/sbin/sshd'\''\'\'''\''`
+>>>>>>> Stashed changes
 - Q4_K_M on GPU: extremely slow (falls back to generic kernels)
 - 4B Q8_0: fails to load (exceeds 1GB per-allocation limit)
 - Vulkan: dead end (vendor=1.1, Mesa Turnip=DeviceLostError)
@@ -594,6 +964,10 @@ After ANY testing that creates data in the DB (test networks, test hosts, demo d
 - Context overflow at old 4096 limit — fixed with 8192
 - 1.2B model stuck loops: fixates on reasoning without COMMAND (3 incidents in 3h observed 2026-03-21). Fixed with time-based backstop (5min) + dup-streak reset + few-shot resets
 - smbclient path hallucination: model sometimes puts CIDR or angle brackets in share path (e.g., `//<192.168.1.15>/`, `//ip/10.0.0.0/24`). Harmless (command fails) but wastes a turn
+<<<<<<< Updated upstream
 - **smbclient fixation (2026-03-22)**: 1.2B model learns "exploit = smbclient" and generates it for every host. Silent validation rejection caused infinite loop. Fixed: let commands fail naturally + varied reset examples. Don't silently reject 1.2B model commands.
+=======
+- **smbclient fixation (2026-03-22)**: 1.2B model learns "exploit = smbclient" and generates it for every host. Silent validation rejection caused infinite loop. Fixed: let commands fail naturally + varied reset examples. Don'\''\'\'''\''t silently reject 1.2B model commands.
+>>>>>>> Stashed changes
 - **VNC empty output**: nxc vnc writes to stderr, so output is empty. VNC failure detection now treats empty output as failure (not just `[*]` check).
 - **nxc vnc -p flag**: VNC has no `-u` flag, only `-p`. Failure extraction adjusted to only require password match.
